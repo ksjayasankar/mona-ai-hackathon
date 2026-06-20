@@ -20,6 +20,7 @@ keep the other 7 as polished prototypes that migrate in over time.
 - ⬜ **Phase 1 — flagships** (parallel git worktrees): P2 UKS, P4 Persowerk.
 - ⬜ **Phase 2**: Theiss cluster (P7/P8/P9) → lighter (P1/P3/P5) → P6 reels.
   **P8 Theiss pricing is spec-locked** (see "Flagship decision — P8") — ready to build as a 4th worktree.
+  **P3 Leistenschneider permits is spec-locked** (see "Flagship decision — P3") — productize the existing 4/4 agent as a 5th worktree.
 
 ## Locked decisions — do not re-litigate
 - **Backend** FastAPI (`api/`). **Frontend** Next.js App Router + TypeScript + Tailwind + shadcn/ui (`web/`).
@@ -96,6 +97,39 @@ router line in `api/main.py`), `web/src/app/theiss-pricing/**`, `web/src/lib/api
   guardrails ✅ · rationale ✅.
 - **Out of scope:** real-time competitor scraping at scale, auto-apply to a live storefront/ERP, paid signal APIs.
 
+## Flagship decision — P3 (locked via /plan-eng-review)
+**P3 Leistenschneider — work-permit validation (PRODUCTIZE the existing 4/4 agent; legally defensible, human-in-loop)**
+EXTENDS the monorepo as a **5th parallel worktree** (`hk-permits` / `feat/permits`), disjoint from
+P2/P4/P8. **REUSES the prototype agent `agents/permits.py` (`validate_permit`, 4/4) as the core —
+extend, NEVER rewrite.** Owns: `agents/permits.py` (extend), `core/models/permit.py` (+1 import line
+in `core/models/__init__.py`), `services/permits.py`, `api/routes/permits.py` (+ the one shared router
+line in `api/main.py`), a small **`§AufenthG` RAG corpus** (additive data, seeded via `core.rag`),
+`web/src/app/leistenschneider/**`, `web/src/lib/api/permits.ts`, `tests/test_permits.py`. The Streamlit
+page `app/pages/03_*` and `evals/permits_eval.py` stay UNTOUCHED.
+- **Reuse, don't rewrite:** keep `validate_permit` + `PermitFields` + the deterministic verdict rule
+  (VALID/EXPIRED/NOT_A_PERMIT/NEEDS_REVIEW/NOT_WORK_AUTHORIZED; "is a permit" kept separate from
+  "employment allowed"). Un-hardcode `TODAY` → `date.today()`, injectable for tests/demo.
+- **Grounding (legal stakes — never hallucinate validity):** extend the schema so the model returns a
+  VERBATIM quote-span for each critical field (valid_until, employment clause, document_type), shown
+  beside the value in the UI. Native Claude/Gemini read — **NO OCR/Tesseract** (CLAUDE.md hard rule).
+- **Calibrated confidence = itemized rubric (replaces the hidden blend):** transparent breakdown —
+  classification certainty + each required field found AND grounded + authorization clause explicit;
+  every deduction shown to the reviewer. Below threshold → NEEDS_REVIEW. Auditable, honest with ~4 samples.
+- **Legal generalization (works for ANY Aufenthaltstitel):** curated structured §AufenthG rule set in a
+  RAG corpus — permit type → default work-authorization + Zusatzblatt requirement + legal-basis citation
+  (Blaue Karte EU allows work by statute; § 16b student restricts; § 18a/b skilled work, …). Validity
+  logic cites the law and resolves novel permits where authorization is implied, not printed.
+  Hand-curated now (firecrawl is 402), enrichable via firecrawl later.
+- **EU-AI-Act human oversight (migration = high-risk AI):** the system NEVER issues a binding decision —
+  it produces recommendation + confidence + grounding; below-threshold routes to a human-review queue;
+  every decision logged with reviewer + timestamp (audit). Human can always override.
+- **Wow beat:** driver's license → NOT_A_PERMIT with reason; valid Aufenthaltstitel → "Work permit: YES
+  (NN%), valid until YYYY-MM-DD, employment: permitted" with quote-spans cited.
+- **Acceptance (CLAUDE.md P3):** confirm doc IS a permit ✅ · confirm/deny + confidence % ✅ · valid-until date ✅.
+- **Budget guard:** dev/test on Ollama (free); extraction is a single structured pass; cache every Gemini
+  call; RAG embeddings namespaced per provider; pre-bake the demo.
+- **Out of scope:** real BAMF/ABH registry lookups, biometric eAT chip reading, OCR pipelines.
+
 ## Target architecture (monorepo)
 ```
 core/   db · models/ · auth · agent (tool-loop) · rag · tools/ · llm · guard · ingest · config
@@ -156,6 +190,9 @@ around it, not against it:
   - P4 Persowerk → `agents/fraud.py`, `api/routes/fraud.py`, `core/models/fraud.py`, `web/app/persowerk/**`
   - P8 Theiss pricing → `agents/pricing.py`, `api/routes/pricing.py`, `core/models/pricing.py`,
     `core/tools/signals.py`, `web/src/app/theiss-pricing/**`, `web/src/lib/api/pricing.ts`
+  - P3 Leistenschneider permits → `agents/permits.py` (EXTEND existing), `api/routes/permits.py`,
+    `core/models/permit.py`, `services/permits.py`, `§AufenthG` RAG corpus, `web/src/app/leistenschneider/**`,
+    `web/src/lib/api/permits.ts` — Streamlit `app/pages/03_*` + `evals/permits_eval.py` stay untouched
   - **P2/P4 DB tables are pre-defined in `core/models/` (Phase 0).** P8 adds a NEW `core/models/pricing.py`
     plus a single **append-only** import line in `core/models/__init__.py` — safe because P2/P4's lines
     are already committed, so there's nothing to collide on. Its only other shared touch is the
