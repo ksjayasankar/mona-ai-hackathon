@@ -1,4 +1,5 @@
 """P2 UKS shift-replacement tests — offline (local ollama, structured gaps, no Twilio)."""
+import json
 from datetime import datetime
 from datetime import datetime as _dt
 
@@ -239,3 +240,48 @@ def test_concurrent_accepts_exactly_one_winner():
         t.join()
     assert results.count("confirmed") == 1
     assert results.count("already_filled") == len(toks) - 1
+
+
+# ---------------------------------------------------------------------------
+# Task 7 — API routes + SSE (FastAPI TestClient, dev-auth, end-to-end)
+# ---------------------------------------------------------------------------
+from fastapi.testclient import TestClient  # noqa: E402
+
+from api.main import app  # noqa: E402
+
+client = TestClient(app)
+
+
+def test_api_end_to_end_flow():
+    assert client.post("/agents/shift/seed").json()["seeded"] == 100
+    gap = client.post("/agents/shift/gaps", json={"structured": dict(_FELIX)}).json()
+    gid = gap["gap"]["id"]
+    assert gap["eligible"] and gap["excluded"]
+    out = client.post(f"/agents/shift/gaps/{gid}/outreach").json()
+    tok = out["sent"]["magic_link"].split("token=")[1]
+    acc = client.post("/agents/shift/accept", json={"token": tok}).json()
+    assert acc["result"] == "confirmed"
+    state = client.get(f"/agents/shift/gaps/{gid}").json()
+    assert state["gap"]["status"] == "filled"
+
+
+def test_api_gap_not_found_is_404():
+    assert client.get("/agents/shift/gaps/does-not-exist").status_code == 404
+
+
+def test_sse_event_bus_delivers_published_snapshot():
+    """The SSE plumbing, tested deterministically (without holding a streaming socket open):
+    a subscriber receives exactly what publish() pushes, and unsubscribe cleans up."""
+    import asyncio
+
+    async def run():
+        gap_id = "gap-bus-test"
+        q = shift_svc.subscribe(gap_id)
+        await shift_svc.publish(gap_id, {"gap": {"id": gap_id}, "hello": "world"})
+        snap = await asyncio.wait_for(q.get(), timeout=2)
+        shift_svc.unsubscribe(gap_id, q)
+        return snap
+
+    snap = asyncio.run(run())
+    assert snap["gap"]["id"] == "gap-bus-test" and snap["hello"] == "world"
+    assert "gap-bus-test" not in shift_svc._subscribers   # unsubscribe removed the empty set

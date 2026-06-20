@@ -390,3 +390,39 @@ def decline(token: str) -> dict:
             log_row.responded_at = _now()
             s.add(log_row); s.commit()
         return {"result": "declined", "gap_id": log_row.gap_id}
+
+
+def tenant_of_gap(gap_id: str) -> str | None:
+    """Resolve a gap's tenant (used by the public, token-only accept/decline routes)."""
+    with Session(db_engine) as s:
+        gap = s.get(ShiftGap, gap_id)
+        return gap.tenant_id if gap else None
+
+
+# --------------------------------------------------------------------------
+# SSE EVENT BUS — in-process pub/sub (single-worker dev/demo). A multi-worker
+# prod deploy would swap this for Redis pub/sub; that's documented as out-of-scope.
+# --------------------------------------------------------------------------
+_subscribers: dict[str, set[asyncio.Queue]] = {}
+
+
+def subscribe(gap_id: str) -> asyncio.Queue:
+    q: asyncio.Queue = asyncio.Queue(maxsize=32)
+    _subscribers.setdefault(gap_id, set()).add(q)
+    return q
+
+
+def unsubscribe(gap_id: str, q: asyncio.Queue) -> None:
+    subs = _subscribers.get(gap_id)
+    if subs:
+        subs.discard(q)
+        if not subs:
+            _subscribers.pop(gap_id, None)
+
+
+async def publish(gap_id: str, snapshot: dict) -> None:
+    for q in list(_subscribers.get(gap_id, ())):
+        try:
+            q.put_nowait(snapshot)
+        except asyncio.QueueFull:
+            pass
