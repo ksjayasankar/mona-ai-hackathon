@@ -21,12 +21,14 @@ against a CV that tries to instruct the checker ("ignore previous instructions�
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from core import guard, ingest, llm
+from core.tools.forensics import Signal
 
 TODAY = date(2026, 6, 20)  # hackathon "today"; keep deterministic for the demo
 
@@ -73,6 +75,8 @@ class CVClaims(BaseModel):
     skills: list[str] = Field(description="Skills / technologies the candidate claims")
     summary: str | None = Field(description="The CV's profile/summary paragraph, verbatim")
     languages: list[str] = Field(default_factory=list, description="Spoken languages claimed")
+    email: str | None = Field(default=None, description="Candidate email if present")
+    github: str | None = Field(default=None, description="GitHub URL or handle if present on the CV")
     extraction_confidence: float = Field(
         description="0-100, how legible/complete the CV was", ge=0, le=100
     )
@@ -307,3 +311,117 @@ def check_certificate(file: str | Path) -> CertResult:
         fields=f,
         reasons=reasons,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Deterministic signal engines (no LLM) — the testable substance of P4.
+# These power the productized service; the legacy analyze_cv/check_certificate
+# above stay for the Streamlit prototype.
+# --------------------------------------------------------------------------- #
+_PRESENT = {"present", "current", "now", "heute", "ongoing", "till date", "to date"}
+
+
+def _parse_month(s: str | None, *, today: date) -> tuple[date | None, bool]:
+    """Parse a CV date as written. Returns (date, is_present_keyword)."""
+    if not s:
+        return None, False
+    t = s.strip().lower()
+    if any(p in t for p in _PRESENT):
+        return today, True
+    for fmt in ("%m/%Y", "%Y-%m", "%m.%Y", "%Y"):
+        try:
+            return datetime.strptime(s.strip(), fmt).date().replace(day=1), False
+        except ValueError:
+            continue
+    m = re.search(r"(19|20)\d{2}", t)
+    if m:
+        return date(int(m.group(0)), 1, 1), False
+    return None, False
+
+
+def _fmt(role: CVRole) -> str:
+    return f"'{role.title or role.employer or '?'}' ({role.start or '?'}–{role.end or '?'})"
+
+
+def consistency_signals(claims: CVClaims, *, today: date = TODAY) -> list[Signal]:
+    """Timeline analysis: overlaps, large gaps, impossible/future dates. All deterministic."""
+    out: list[Signal] = []
+    parsed = []
+    for r in claims.roles:
+        s, _ = _parse_month(r.start, today=today)
+        e, is_present = _parse_month(r.end, today=today)
+        parsed.append((r, s, e, is_present))
+        if s and e and e < s:
+            out.append(Signal(name="impossible_dates", severity="medium", category="consistency",
+                              evidence=f"Role {_fmt(r)} ends before it starts.",
+                              why="An end date earlier than the start is internally impossible — likely a typo or fabrication."))
+        for label, dt in (("start", s), ("end", None if is_present else e)):
+            if dt and dt > today:
+                out.append(Signal(name="future_dated", severity="medium", category="consistency",
+                                  evidence=f"Role {_fmt(r)} has a {label} date in the future ({dt.year}).",
+                                  why="A date after today cannot describe past employment."))
+
+    # overlaps (>1 month) between any two datable roles
+    datable = [(r, s, e) for (r, s, e, _p) in parsed if s and e]
+    for i in range(len(datable)):
+        for j in range(i + 1, len(datable)):
+            (ra, sa, ea), (rb, sb, eb) = datable[i], datable[j]
+            overlap_days = (min(ea, eb) - max(sa, sb)).days
+            if overlap_days > 31:
+                out.append(Signal(name="timeline_overlap", severity="medium", category="consistency",
+                                  evidence=f"{_fmt(ra)} overlaps {_fmt(rb)} by ~{overlap_days // 30} month(s).",
+                                  why="Concurrent full-time roles can be legitimate (freelance/part-time) but often "
+                                      "indicate padding — confirm with the candidate."))
+
+    # gaps > 12 months between consecutive (sorted by start) roles
+    seq = sorted([(r, s, e) for (r, s, e, _p) in parsed if s and e], key=lambda x: x[1])
+    for (ra, _sa, ea), (rb, sb, _eb) in zip(seq, seq[1:]):
+        gap_days = (sb - ea).days
+        if gap_days > 365:
+            out.append(Signal(name="timeline_gap", severity="low", category="consistency",
+                              evidence=f"~{gap_days // 30}-month gap between {_fmt(ra)} and {_fmt(rb)}.",
+                              why="Unexplained gaps are common and rarely fraud, but worth a question in interview."))
+    return out
+
+
+def _norm_name(n: str | None) -> set[str]:
+    return {t for t in re.split(r"\s+", (n or "").lower().strip()) if len(t) > 1}
+
+
+def cross_signals(claims: CVClaims, certs: list[CertFields]) -> list[Signal]:
+    """Cross-document: does the CV name match the certificate holder?"""
+    out: list[Signal] = []
+    cv_tokens = _norm_name(claims.candidate_name)
+    if not cv_tokens:
+        return out
+    for c in certs:
+        h_tokens = _norm_name(c.holder_name)
+        if h_tokens and not (cv_tokens & h_tokens):
+            out.append(Signal(name="name_mismatch", severity="medium", category="consistency",
+                              evidence=f"CV name '{claims.candidate_name}' does not match certificate holder "
+                                       f"'{c.holder_name}' on {c.cert_type or 'a certificate'}.",
+                              why="A certificate issued to a different person may be borrowed or fabricated — verify identity."))
+    return out
+
+
+def cert_signals(cert: CertFields, *, today: date = TODAY) -> list[Signal]:
+    """Certificate forgery + currency signals (deterministic over the extracted fields)."""
+    out: list[Signal] = []
+    if not cert.is_certificate:
+        return out
+    if not cert.is_genuine_looking:
+        out.append(Signal(name="certificate_suspect", severity="high", category="certificate",
+                          evidence=f"Document '{cert.title or cert.cert_type}' shows authenticity problems: "
+                                   + "; ".join(cert.forgery_signals or ["model judged it not genuine-looking"]) + ".",
+                          why="The visual layout/seal/fonts look inconsistent with a genuine credential — examine the original."))
+    elif len(cert.forgery_signals or []) >= 2:
+        out.append(Signal(name="certificate_suspect", severity="medium", category="certificate",
+                          evidence="Multiple forgery hints: " + "; ".join(cert.forgery_signals) + ".",
+                          why="Several small anomalies together warrant a manual look."))
+    vu = _parse_date(cert.valid_until)
+    if vu and vu < today:
+        out.append(Signal(name="certificate_expired", severity="medium", category="certificate",
+                          evidence=f"Certificate '{cert.title or cert.cert_type}' expired on {cert.valid_until} "
+                                   f"({(today - vu).days} days ago).",
+                          why="An expired credential does not meet a 'valid & current' requirement."))
+    return out
