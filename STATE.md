@@ -17,7 +17,24 @@ keep the other 7 as polished prototypes that migrate in over time.
   wired end-to-end** (web → API → agent loop → SQLite, tenant-scoped + audited). Runs on
   SQLite + dev-auth locally; Supabase-ready via env. Offline tests green; the foundation is
   the template flagship worktrees copy.
-- ⬜ **Phase 1 — flagships** (parallel git worktrees): P2 UKS, P4 Persowerk.
+- 🟡 **Phase 1 — flagships** (parallel git worktrees): **P2 UKS DONE** (`feat/uks`), P4 Persowerk ⬜.
+  - **P2 UKS shift replacement** — deterministic **ArbZG eligibility engine** (qualified + not-on-shift
+    + §5 ≥11h rest + §3 weekly cap + Active, with per-candidate **why-eligible / why-excluded**), fairness
+    ranking (headroom · last-contacted · overtime · contract · ward · preference); free-text (`core.llm`)
+    + structured gap intake; sequential **Twilio-or-simulated SMS** outreach with magic-link accept +
+    manual/timer escalate; **race-safe first-accept lock** (single atomic `UPDATE … WHERE status='open'`,
+    rowcount guard — a late reply after escalation can't double-fill); **live SSE dashboard** + accept page;
+    schedule flips on accept. **Real-world round-trip**: on accept the roster update lands in a live
+    **Google Sheet** (gspread, service-account) or an **xlsx write-back** fallback (`data/hospital_schedule_updated.xlsx`,
+    highlighted cell + audit sheet) when no creds — `services/roster_sink.py`. **SMS/WhatsApp phone-mock intake**
+    + **clinical ops-console redesign** (UKS-branded) + a **live schedule grid** in `web/src/app/uks/`. Tested
+    offline (ollama + simulated Twilio + throwaway SQLite): compliance
+    exclusions, ranking, the first-accept race (threaded), the roster-sink (xlsx + selection + accept-never-crashes),
+    and the API happy path. Run: API
+    `LLM_PROVIDER=ollama AUTH_MODE=dev uv run uvicorn api.main:app --port 8000`, web `cd web && npm run dev`,
+    open `/uks`. Tests: `uv run pytest tests/test_shift.py`. No new pip deps (Twilio via REST/httpx; SSE
+    via StreamingResponse). Files: `agents/shift.py`, `services/shift.py`, `api/routes/shift.py`,
+    `web/src/app/uks/**`, `core/models/shift.py` (+ alembic `p2shiftcols01`).
 - ⬜ **Phase 2**: Theiss cluster (P7/P8/P9) → lighter (P1/P3/P5) → P6 reels.
   **P8 Theiss pricing is spec-locked** (see "Flagship decision — P8") — ready to build as a 4th worktree.
   **P3 Leistenschneider permits is spec-locked** (see "Flagship decision — P3") — productize the existing 4/4 agent as a 5th worktree.
