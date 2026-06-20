@@ -156,3 +156,23 @@ def test_create_and_screen_felix_gap():
     assert rep.excluded and all(e.reason for e in rep.excluded)
     state = shift_svc.gap_state(tenant, gid)
     assert state["gap"]["status"] == "open" and state["eligible"]
+
+
+# ---------------------------------------------------------------------------
+# Task 5 — sequential outreach (simulated send, no Twilio) + magic links
+# ---------------------------------------------------------------------------
+def test_outreach_simulated_send_and_escalate():
+    tenant = get_or_create_tenant("test-uks3", "Test UKS 3")
+    shift_svc.seed_staff(tenant)
+    gid = shift_svc.create_gap(tenant, structured=dict(_FELIX))
+    out = shift_svc.start_outreach(tenant, gid)
+    assert out["sent"]["seq"] == 0 and out["sent"]["simulated"] is True
+    assert "token=" in out["sent"]["magic_link"]
+    from sqlmodel import select
+    with Session(engine) as s:
+        logs = s.exec(select(OutreachLog).where(OutreachLog.gap_id == gid)
+                      .order_by(OutreachLog.seq)).all()
+        assert len(logs) >= 2
+        assert logs[0].status == "sent" and logs[0].token and logs[1].status == "queued"
+    esc = shift_svc.escalate(tenant, gid)
+    assert esc["sent"]["seq"] == 1

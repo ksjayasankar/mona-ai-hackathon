@@ -12,7 +12,7 @@ import logging
 import os
 import re
 import secrets
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -29,6 +29,11 @@ log = logging.getLogger("shift")
 NOW = engine.NOW                       # Sat 2026-06-20 18:30 (demo clock)
 TODAY = NOW.date()
 SHIFT_TIMES = {"day": (time(7, 0), time(19, 0)), "night": (time(19, 0), time(7, 0))}
+
+
+def _now() -> datetime:
+    """Naive UTC 'now' — consistent with the naive datetimes elsewhere (shift_start etc.)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # --------------------------------------------------------------------------
@@ -216,3 +221,97 @@ def list_gaps(tenant_id: str, limit: int = 20) -> list[dict]:
         return [{"id": g.id, "role": g.role, "department": g.department, "shift": g.shift,
                  "day_label": g.day_label, "status": g.status,
                  "created_at": g.created_at.isoformat()} for g in rows]
+
+
+# --------------------------------------------------------------------------
+# OUTREACH — Twilio SMS (real, via REST/httpx) or a logged simulated send
+# --------------------------------------------------------------------------
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:3000")
+_TW_SID = os.getenv("TWILIO_ACCOUNT_SID")
+_TW_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+_TW_FROM = os.getenv("TWILIO_FROM")
+
+
+def magic_link(token: str) -> str:
+    return f"{PUBLIC_BASE_URL}/uks/accept?token={token}"
+
+
+def send_sms(to: str, body: str) -> dict:
+    """Real Twilio SMS when creds are present; otherwise a logged simulated send.
+    Uses the Twilio REST API directly over httpx (no extra SDK dependency)."""
+    if _TW_SID and _TW_TOKEN and _TW_FROM and to:
+        import httpx
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{_TW_SID}/Messages.json"
+        try:
+            r = httpx.post(url, auth=(_TW_SID, _TW_TOKEN),
+                           data={"From": _TW_FROM, "To": to, "Body": body}, timeout=15)
+            r.raise_for_status()
+            return {"simulated": False, "sid": r.json().get("sid"), "to": to, "body": body}
+        except Exception as e:                              # never let a send crash the flow
+            log.warning("twilio send failed (%s); falling back to simulated", e)
+    log.info("SIMULATED SMS to %s: %s", to, body)
+    return {"simulated": True, "sid": "SIMULATED", "to": to, "body": body}
+
+
+def _draft_sms(gap: ShiftGap, staff: Staff, link: str) -> str:
+    first = (staff.name or "there").split()[0] if staff.name else "there"
+    ward = f"{gap.department} " if gap.department else ""
+    window = (f"{gap.shift_start:%H:%M}-{gap.shift_end:%H:%M}"
+              if gap.shift_start and gap.shift_end else (gap.shift or ""))
+    return (f"Hi {first}, UKS staffing here. Urgent {ward}{gap.shift}-shift gap {gap.day_label} "
+            f"({window}, 12h) — a colleague called in sick. You're qualified & off. "
+            f"Tap to accept: {link}")
+
+
+def _send_seq(s: Session, gap: ShiftGap, log_row: OutreachLog, staff: Staff) -> dict:
+    link = magic_link(log_row.token)
+    body = _draft_sms(gap, staff, link)
+    res = send_sms(staff.phone or "", body)
+    log_row.message = body
+    log_row.status = "sent"
+    log_row.sent_at = _now()
+    staff.last_contacted_at = log_row.sent_at
+    s.add(log_row); s.add(staff); s.commit()
+    return {"seq": log_row.seq, "staff_id": staff.id, "staff_name": staff.name,
+            "magic_link": link, "message": body, "simulated": res["simulated"], "sid": res["sid"]}
+
+
+def start_outreach(tenant_id: str, gap_id: str) -> dict:
+    """Queue an OutreachLog (with a magic-link token) for every eligible candidate in rank
+    order, then send to candidate #0. Idempotent: returns existing state if already started."""
+    rep = screen_gap(tenant_id, gap_id)
+    with Session(db_engine) as s:
+        gap = _load_gap(s, tenant_id, gap_id)
+        if gap.status != "open":
+            return {"already": True, "sent": None, **gap_state(tenant_id, gap_id)}
+        existing = s.exec(select(OutreachLog).where(OutreachLog.gap_id == gap_id)).all()
+        if existing:
+            return {"already": True, "sent": None, **gap_state(tenant_id, gap_id)}
+        if not rep.eligible:
+            return {"sent": None, "note": "no eligible candidates", **gap_state(tenant_id, gap_id)}
+        by_emp = {p.employee_id: p for p in
+                  s.exec(select(Staff).where(Staff.tenant_id == tenant_id)).all()}
+        rows: list[OutreachLog] = []
+        for i, c in enumerate(rep.eligible):
+            rows.append(OutreachLog(tenant_id=tenant_id, gap_id=gap_id, staff_id=by_emp[c.employee_id].id,
+                                    channel="sms", status="queued", seq=i, token=secrets.token_urlsafe(16)))
+        s.add_all(rows); s.commit()
+        for r in rows:
+            s.refresh(r)
+        sent = _send_seq(s, gap, rows[0], by_emp[rep.eligible[0].employee_id])
+    return {"sent": sent, **gap_state(tenant_id, gap_id)}
+
+
+def escalate(tenant_id: str, gap_id: str) -> dict:
+    """Send to the next queued candidate (manual 'escalate now' / dashboard timer)."""
+    with Session(db_engine) as s:
+        gap = _load_gap(s, tenant_id, gap_id)
+        if gap.status != "open":
+            return {"sent": None, "note": "gap already filled/closed", **gap_state(tenant_id, gap_id)}
+        nxt = s.exec(select(OutreachLog).where(OutreachLog.gap_id == gap_id,
+                     OutreachLog.status == "queued").order_by(OutreachLog.seq)).first()
+        if not nxt:
+            return {"sent": None, "note": "no more candidates to escalate to", **gap_state(tenant_id, gap_id)}
+        staff = s.get(Staff, nxt.staff_id)
+        sent = _send_seq(s, gap, nxt, staff)
+    return {"sent": sent, **gap_state(tenant_id, gap_id)}
