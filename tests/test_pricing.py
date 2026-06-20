@@ -169,3 +169,89 @@ def test_s6_fetch_all_survives_a_failing_connector():
 
     out = fetch_all([Boom(), SeededConnector(SEED_SUPPLY)])
     assert any(s.source.startswith("seeded") for s in out)  # the good one still came through
+
+
+# ----------------------------------------------------------------------------
+# Service orchestration (services/pricing.py) — OFFLINE: inject items + signals
+# + a fake proposer so no Ollama / no HTTP is touched. Tests persistence,
+# guardrail integration, tenant scoping, approve/reject, and fallbacks.
+# ----------------------------------------------------------------------------
+from core.auth import get_or_create_tenant  # noqa: E402
+from services import pricing as svc  # noqa: E402
+
+
+def _catalog():
+    return [
+        CatalogItem(product="Erkaeltungstee", current_price=5.00, category="cold_remedy"),
+        CatalogItem(product="Fuss Butter", current_price=10.00, category="foot_care"),
+    ]
+
+
+def _fake_proposer(deltas):
+    """Build a proposer callable returning fixed deltas keyed by product name."""
+    def proposer(items, signals, provider=None):
+        return svc.Proposal(items=[
+            svc.ProposalItem(product=p, delta_pct=d, rationale="demand up") for p, d in deltas.items()
+        ])
+    return proposer
+
+
+def test_p1_analyze_persists_and_gates_with_a_blocked_card():
+    tenant = get_or_create_tenant("test-theiss-p1", "Test Theiss")
+    spike = _spike(["cold_remedy"])
+    report = svc.analyze(
+        tenant_id=tenant, items=_catalog(), signals=[spike],
+        proposer=_fake_proposer({"Erkaeltungstee": 22.0, "Fuss Butter": 8.0}),
+    )
+    assert report.product_count == 2
+    assert report.blocked_count == 1
+    by = {c["product"]: c for c in report.products}
+    assert by["Erkaeltungstee"]["guardrail_status"] == "blocked"   # anti-gouging fired
+    assert by["Erkaeltungstee"]["final_price"] == 5.00
+    assert by["Fuss Butter"]["guardrail_status"] == "applied"
+    assert by["Fuss Butter"]["final_price"] == 10.80
+    # each card is persisted and approvable
+    assert all(c.get("rec_id") for c in report.products)
+
+
+def test_p2_approve_reject_transition_and_history():
+    tenant = get_or_create_tenant("test-theiss-p2", "Test Theiss")
+    report = svc.analyze(tenant_id=tenant, items=_catalog(), signals=[],
+                         proposer=_fake_proposer({"Fuss Butter": 8.0}))
+    rec_id = report.products[0]["rec_id"]
+    approved = svc.approve(rec_id, tenant)
+    assert approved["status"] == "approved"
+    rejected = svc.reject(report.products[1]["rec_id"], tenant)
+    assert rejected["status"] == "rejected"
+    hist = svc.history(tenant)
+    assert any(h["id"] == report.run_id for h in hist)
+
+
+def test_p3_cross_tenant_access_is_blocked():
+    owner = get_or_create_tenant("test-theiss-owner", "Owner")
+    attacker = get_or_create_tenant("test-theiss-attacker", "Attacker")
+    report = svc.analyze(tenant_id=owner, items=_catalog(), signals=[],
+                         proposer=_fake_proposer({"Fuss Butter": 5.0}))
+    rec_id = report.products[0]["rec_id"]
+    try:
+        svc.approve(rec_id, attacker)
+        assert False, "cross-tenant approve must not succeed"
+    except LookupError:
+        pass
+
+
+def test_p4_empty_catalogue_yields_empty_report_no_crash():
+    tenant = get_or_create_tenant("test-theiss-p4", "Test Theiss")
+    report = svc.analyze(tenant_id=tenant, items=[], signals=[], proposer=_fake_proposer({}))
+    assert report.product_count == 0
+    assert report.products == []
+
+
+def test_p5_missing_proposal_holds_at_base():
+    tenant = get_or_create_tenant("test-theiss-p5", "Test Theiss")
+    # proposer returns nothing for the product -> default delta 0, applied at base
+    report = svc.analyze(tenant_id=tenant, items=_catalog(), signals=[], proposer=_fake_proposer({}))
+    by = {c["product"]: c for c in report.products}
+    assert by["Fuss Butter"]["final_delta_pct"] == 0.0
+    assert by["Fuss Butter"]["final_price"] == 10.00
+    assert by["Fuss Butter"]["guardrail_status"] == "applied"
