@@ -190,7 +190,9 @@ def gap_state(tenant_id: str, gap_id: str) -> dict:
         gap = _load_gap(s, tenant_id, gap_id)
         logs = s.exec(select(OutreachLog).where(OutreachLog.gap_id == gap_id)
                       .order_by(OutreachLog.seq)).all()
-        staff_names = {p.id: p.name for p in s.exec(select(Staff).where(Staff.tenant_id == tenant_id)).all()}
+        staff_rows = s.exec(select(Staff).where(Staff.tenant_id == tenant_id)).all()
+        staff_names = {p.id: p.name for p in staff_rows}
+        staff_emp = {p.id: p.employee_id for p in staff_rows}
         filled_by = None
         if gap.filled_by_staff_id:
             fb = s.get(Staff, gap.filled_by_staff_id)
@@ -207,6 +209,7 @@ def gap_state(tenant_id: str, gap_id: str) -> dict:
             "excluded": [e.model_dump() for e in rep.excluded],
             "counts": {"total": rep.n_total, "active": rep.n_active, "eligible": rep.n_eligible},
             "outreach": [{"id": l.id, "staff_id": l.staff_id, "staff_name": staff_names.get(l.staff_id),
+                          "employee_id": staff_emp.get(l.staff_id),
                           "seq": l.seq, "status": l.status, "channel": l.channel, "message": l.message,
                           "sent_at": l.sent_at.isoformat() if l.sent_at else None,
                           "responded_at": l.responded_at.isoformat() if l.responded_at else None}
