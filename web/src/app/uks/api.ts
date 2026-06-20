@@ -65,6 +65,12 @@ export interface GapState {
     filled_at: string | null;
   };
   filled_by: { id: string; name: string; employee_id: string } | null;
+  roster_sync: { target: string; ok: boolean; link: string | null } | null;
+  schedule_preview: {
+    days: string[];
+    gap_day: string;
+    rows: { employee_id: string; name: string; role: string; is_winner: boolean; grid: Record<string, string> }[];
+  };
   eligible: Eligible[];
   excluded: Excluded[];
   counts: { total: number; active: number; eligible: number };

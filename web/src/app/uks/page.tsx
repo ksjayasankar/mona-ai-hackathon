@@ -1,43 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Badge, Button, Card } from "@/components/ui";
-import {
-  API_BASE,
-  type Eligible,
-  type GapState,
-  type Outreach,
-  createGap,
-  escalate,
-  seed,
-  startOutreach,
-} from "./api";
-
-const SAMPLE_MSG =
-  "Felix Haddad (HOSP-1059) just called in sick for tonight's ICU night shift " +
-  "(Sat 06/20, 19:00-07:00). He's a Registered Nurse, ICU needs BLS + ACLS. Find me cover ASAP.";
-
-const FELIX_STRUCTURED = {
-  role: "Registered Nurse",
-  department: "ICU",
-  shift: "night",
-  day_label: "Sat 06/20",
-  required_certs: ["BLS", "ACLS"],
-  person_out: "Felix Haddad (HOSP-1059)",
-};
+import { API_BASE, type GapState, type Outreach, createGap, escalate, seed, startOutreach } from "./api";
+import { CandidateRow } from "./components/CandidateRow";
+import { IntakePhone } from "./components/IntakePhone";
+import { ScheduleGrid } from "./components/ScheduleGrid";
+import { StatusPill } from "./components/StatusPill";
 
 const ESCALATE_AFTER = 30; // seconds before auto-escalating to the next candidate
 
-const STATUS_TONE: Record<string, "slate" | "green" | "red" | "amber"> = {
-  queued: "slate",
-  sent: "amber",
-  accepted: "green",
-  declined: "red",
-  closed: "slate",
-};
-
 export default function UksDashboard() {
-  const [message, setMessage] = useState(SAMPLE_MSG);
   const [gapId, setGapId] = useState<string | null>(null);
   const [st, setSt] = useState<GapState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -113,7 +85,7 @@ export default function UksDashboard() {
     setErr(null);
     try {
       const res = await startOutreach(gapId);
-      if (res?.gap) setSt(res as GapState);
+      if ((res as GapState)?.gap) setSt(res as GapState);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -126,207 +98,194 @@ export default function UksDashboard() {
     if (o.employee_id) outreachByEmp.set(o.employee_id, o);
   });
 
+  const win = (start: string | null, end: string | null) =>
+    start && end ? `${start.slice(11, 16)}–${end.slice(11, 16)}` : "";
+
   return (
-    <main className="mx-auto max-w-6xl px-6 py-10 text-slate-900">
-      {/* branded header */}
-      <div className="mb-8 border-l-4 pl-4" style={{ borderColor: "#b3122b" }}>
-        <p className="text-xs font-semibold tracking-widest text-slate-500">
-          PROBLEM 2 · UNIVERSITÄTSKLINIKUM DES SAARLANDES (UKS) · HR / STAFFING
-        </p>
-        <h1 className="text-3xl font-bold">🏥 Shift Replacement Agent</h1>
-        <p className="mt-1 text-slate-600">
-          Message the gap. It finds <strong>available, qualified, ArbZG-compliant</strong> staff, reaches out in
-          fairness order, and locks the first to accept — live.
-        </p>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
-        {/* intake */}
-        <div className="space-y-4">
-          <Card className="p-5">
-            <h2 className="mb-3 text-lg font-semibold">Report a shift gap</h2>
-            <label className="mb-1 block text-sm font-medium">Sick-call message</label>
-            <textarea
-              className="mb-3 h-36 w-full rounded-lg border border-slate-300 p-2 text-sm"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-            />
-            <div className="flex flex-col gap-2">
-              <Button onClick={() => load({ message })} disabled={busy}>
-                {busy ? "Working…" : "Find cover (AI parses the message)"}
-              </Button>
-              <button
-                onClick={() => load({ structured: FELIX_STRUCTURED })}
-                disabled={busy}
-                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                Load tonight&apos;s ICU scenario (no AI)
-              </button>
-            </div>
-            {err && <p className="mt-3 text-sm text-red-700">⚠️ {err}</p>}
-          </Card>
-
-          {st && (
-            <Card className="p-5">
-              <h2 className="mb-2 text-lg font-semibold">The gap</h2>
-              <p className="text-sm text-slate-700">
-                <strong>{st.gap.person_out ?? "A staff member"}</strong> is out.
-              </p>
-              <ul className="mt-2 space-y-1 text-sm text-slate-600">
-                <li>
-                  Role: <strong>{st.gap.role}</strong>
-                  {st.gap.department ? ` · ${st.gap.department}` : ""}
-                </li>
-                <li>
-                  {st.gap.shift} shift · {st.gap.day_label}
-                  {st.gap.shift_start && st.gap.shift_end
-                    ? ` · ${st.gap.shift_start.slice(11, 16)}–${st.gap.shift_end.slice(11, 16)}`
-                    : ""}
-                </li>
-                <li>Certs: {st.gap.required_certs.join(", ") || "role-based"}</li>
-              </ul>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Badge tone={open ? "amber" : "green"}>{open ? "OPEN" : st.gap.status.toUpperCase()}</Badge>
-                <span className="text-xs text-slate-500">
-                  {st.counts.active} active screened · {st.counts.eligible} eligible · {st.excluded.length} excluded
-                </span>
+    <main className="min-h-screen bg-slate-50 text-slate-900">
+      {/* top bar */}
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-[#b3122b] text-lg text-white">🏥</div>
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+                Universitätsklinikum des Saarlandes · HR / Staffing
               </div>
-            </Card>
-          )}
+              <h1 className="text-lg font-bold leading-tight">Shift Replacement Agent</h1>
+            </div>
+          </div>
+          {st && <StatusPill status={st.gap.status} />}
+        </div>
+      </header>
+
+      <div className="mx-auto grid max-w-7xl gap-6 px-6 py-8 lg:grid-cols-[380px_1fr]">
+        {/* left rail: intake + schedule */}
+        <div className="space-y-6">
+          <IntakePhone onSubmit={load} busy={busy} parsed={st?.gap ?? null} />
+          {err && <p className="text-sm text-rose-700">⚠️ {err}</p>}
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Roster · this week</h2>
+              {st?.schedule_preview?.gap_day && (
+                <span className="text-[11px] text-slate-400">gap: {st.schedule_preview.gap_day}</span>
+              )}
+            </div>
+            <ScheduleGrid preview={st?.schedule_preview} />
+            {st?.roster_sync?.link && (
+              <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-500">
+                ✅ Roster updated in{" "}
+                {st.roster_sync.target === "google_sheets" ? "Google Sheets" : "the schedule file"} —{" "}
+                {st.roster_sync.target === "google_sheets" ? (
+                  <a className="font-medium text-[#b3122b] underline" href={st.roster_sync.link} target="_blank" rel="noreferrer">
+                    open sheet
+                  </a>
+                ) : (
+                  <code className="break-all text-slate-600">{st.roster_sync.link}</code>
+                )}
+              </p>
+            )}
+          </section>
         </div>
 
-        {/* live board */}
-        <div className="space-y-4">
+        {/* main column */}
+        <div className="space-y-6">
           {!st && (
-            <Card className="p-8 text-center text-slate-500">
-              Report a gap to see ranked, compliant cover options appear here — live.
-            </Card>
+            <div className="grid place-items-center rounded-2xl border border-dashed border-slate-300 bg-white p-16 text-center text-slate-400">
+              Send the sick-call from the phone on the left to see ranked, ArbZG-compliant cover options appear here — live.
+            </div>
           )}
 
           {st && (
             <>
-              {/* schedule strip */}
-              <Card className={`p-5 ${open ? "" : "border-green-300 bg-green-50"}`}>
-                <h2 className="mb-2 text-lg font-semibold">Schedule · {st.gap.day_label}</h2>
-                {st.filled_by ? (
-                  <p className="text-sm text-green-800">
-                    ✅ <strong>{st.filled_by.name}</strong> is now covering the {st.gap.shift} shift — the roster cell
-                    just flipped to <Badge tone="green">N</Badge>.
-                  </p>
-                ) : (
-                  <p className="text-sm text-amber-700">
-                    ⚠️ {st.gap.shift} shift is <strong>OPEN</strong> — reaching out to candidates in fairness order.
-                  </p>
+              {/* gap header */}
+              <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">The gap</div>
+                    <h2 className="mt-1 text-xl font-bold">
+                      {st.gap.role}
+                      {st.gap.department ? ` · ${st.gap.department}` : ""}
+                    </h2>
+                    <p className="mt-0.5 text-sm text-slate-500">
+                      {st.gap.shift} shift · {st.gap.day_label}
+                      {win(st.gap.shift_start, st.gap.shift_end) ? ` · ${win(st.gap.shift_start, st.gap.shift_end)}` : ""} ·
+                      certs: {st.gap.required_certs.join(", ") || "role-based"}
+                    </p>
+                    {st.gap.person_out && (
+                      <p className="mt-0.5 text-sm text-slate-400">
+                        out sick: <span className="font-medium text-slate-600">{st.gap.person_out}</span>
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right text-xs text-slate-400">
+                    <div className="text-2xl font-bold text-slate-900">{st.counts.eligible}</div>
+                    eligible
+                    <div className="mt-1">
+                      {st.counts.active} screened · {st.excluded.length} excluded
+                    </div>
+                  </div>
+                </div>
+
+                {st.filled_by && (
+                  <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                    ✅ <strong>{st.filled_by.name}</strong> is now covering the {st.gap.shift} shift — roster cell flipped to{" "}
+                    <span className="font-bold">{st.gap.shift === "night" ? "N" : "D"}</span>.
+                  </div>
                 )}
-              </Card>
+              </section>
 
               {/* outreach controls */}
-              <Card className="p-5">
+              <section className="rounded-2xl border border-slate-200 bg-white p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h2 className="text-lg font-semibold">Outreach</h2>
+                  <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Outreach</h2>
                   {!outreachStarted ? (
-                    <Button onClick={onStartOutreach} disabled={busy || st.counts.eligible === 0}>
-                      📤 Start outreach (SMS candidate #1)
-                    </Button>
+                    <button
+                      onClick={onStartOutreach}
+                      disabled={busy || st.counts.eligible === 0}
+                      className="rounded-lg bg-[#b3122b] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#8f0e22] disabled:opacity-50"
+                    >
+                      📤 Start outreach (SMS #1)
+                    </button>
                   ) : open ? (
                     <div className="flex items-center gap-3">
                       {hasQueued && sentCount > 0 && (
-                        <span className="text-xs text-slate-500">auto-escalates in {secs}s</span>
+                        <span className="text-xs text-slate-400">auto-escalates in {secs}s</span>
                       )}
-                      <Button onClick={escalateNow} disabled={busy || !hasQueued}>
+                      <button
+                        onClick={escalateNow}
+                        disabled={busy || !hasQueued}
+                        className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                      >
                         ⏭ Escalate now
-                      </Button>
+                      </button>
                     </div>
                   ) : (
-                    <Badge tone="green">filled</Badge>
+                    <StatusPill status="filled" />
                   )}
                 </div>
                 {outreachStarted && (
-                  <ul className="mt-3 space-y-1.5 text-sm">
+                  <ol className="mt-3 space-y-1.5 text-sm">
                     {st.outreach.map((o) => (
                       <li key={o.id} className="flex items-center justify-between">
-                        <span>
-                          #{o.seq + 1} {o.staff_name}
+                        <span className="text-slate-600">
+                          <span className="text-slate-400">#{o.seq + 1}</span> {o.staff_name}
                         </span>
-                        <Badge tone={STATUS_TONE[o.status] ?? "slate"}>{o.status}</Badge>
+                        <StatusPill status={o.status} />
                       </li>
                     ))}
-                  </ul>
+                  </ol>
                 )}
-              </Card>
+              </section>
 
-              {/* ranked eligible */}
-              <Card className="p-5">
-                <h2 className="mb-3 text-lg font-semibold">
-                  Ranked cover options <span className="text-sm font-normal text-slate-500">(eligible &amp; compliant)</span>
+              {/* ranked candidates */}
+              <section>
+                <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-500">
+                  Ranked cover options{" "}
+                  <span className="font-normal normal-case text-slate-400">(eligible &amp; compliant)</span>
                 </h2>
                 {st.eligible.length === 0 ? (
-                  <p className="text-sm text-slate-500">No one currently qualifies. Widen the role or relax certs.</p>
+                  <p className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
+                    No one currently qualifies. Widen the role or relax certs.
+                  </p>
                 ) : (
                   <div className="space-y-3">
                     {st.eligible.map((c, i) => (
-                      <CandidateCard key={c.employee_id} c={c} rank={i + 1} outreach={outreachByEmp.get(c.employee_id)} />
+                      <CandidateRow key={c.employee_id} c={c} rank={i + 1} outreach={outreachByEmp.get(c.employee_id)} />
                     ))}
                   </div>
                 )}
-              </Card>
+              </section>
 
-              {/* excluded with reasons */}
-              <Card className="p-5">
-                <button
-                  className="flex w-full items-center justify-between text-left"
-                  onClick={() => setShowExcluded((v) => !v)}
-                >
-                  <h2 className="text-lg font-semibold">
-                    Why others were excluded <span className="text-sm font-normal text-slate-500">({st.excluded.length})</span>
+              {/* excluded */}
+              <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                <button className="flex w-full items-center justify-between text-left" onClick={() => setShowExcluded((v) => !v)}>
+                  <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">
+                    Why others were excluded <span className="font-normal text-slate-400">({st.excluded.length})</span>
                   </h2>
                   <span className="text-slate-400">{showExcluded ? "▲" : "▼"}</span>
                 </button>
                 {showExcluded && (
-                  <ul className="mt-3 space-y-1.5 text-sm">
+                  <ul className="mt-3 space-y-2 text-sm">
                     {st.excluded.map((e) => (
-                      <li key={e.employee_id} className="flex items-start justify-between gap-3">
-                        <span className="text-slate-700">
-                          <strong>{e.name}</strong> · {e.role}
+                      <li key={e.employee_id} className="flex items-start justify-between gap-3 border-t border-slate-100 pt-2">
+                        <span className="text-slate-600">
+                          <strong className="text-slate-800">{e.name}</strong> · {e.role}
                           {e.department ? ` / ${e.department}` : ""} — {e.reason}
                         </span>
-                        <Badge tone="red">{e.rule}</Badge>
+                        <span className="shrink-0 rounded bg-rose-50 px-1.5 py-0.5 text-[11px] font-semibold text-rose-700">
+                          {e.rule}
+                        </span>
                       </li>
                     ))}
                   </ul>
                 )}
-              </Card>
+              </section>
             </>
           )}
         </div>
       </div>
     </main>
-  );
-}
-
-function CandidateCard({ c, rank, outreach }: { c: Eligible; rank: number; outreach?: Outreach }) {
-  return (
-    <div className={`rounded-lg border p-3 ${rank === 1 ? "border-amber-300 bg-amber-50" : "border-slate-200"}`}>
-      <div className="flex items-center justify-between">
-        <div className="font-semibold">
-          {rank === 1 ? "🥇 " : `${rank}. `}
-          {c.name} <span className="font-normal text-slate-500">· {c.role} / {c.department}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          {outreach && <Badge tone={STATUS_TONE[outreach.status] ?? "slate"}>{outreach.status}</Badge>}
-          <Badge tone="slate">score {c.score}</Badge>
-        </div>
-      </div>
-      <div className="mt-1 text-xs text-slate-500">
-        📞 {c.phone} · {c.contract} · {Math.round(c.scheduled_hours)}/{Math.round(c.max_hours)}h this week ·{" "}
-        {c.overtime_ok ? "OT OK ✅" : "OT: no"}
-        {c.rest_hours != null ? ` · ${Math.round(c.rest_hours)}h rest` : ""}
-      </div>
-      <ul className="mt-2 list-disc pl-5 text-sm text-slate-700">
-        {c.why.map((w, i) => (
-          <li key={i}>{w}</li>
-        ))}
-      </ul>
-    </div>
   );
 }
