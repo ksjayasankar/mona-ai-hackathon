@@ -18,7 +18,7 @@ st.title("🤖 Mona AI — Customer Agent Suite")
 st.caption("Ten customer feature requests, ten agents, one app. Pick a customer from the sidebar to run their demo.")
 
 if not config.HAS_KEY:
-    st.warning("🔑 No `ANTHROPIC_API_KEY` set yet. Paste your key into `.env` at the repo root to run the live demos.")
+    st.warning("🔑 No `GEMINI_API_KEY` set yet. Paste your Gemini key into `.env` at the repo root to run the live demos.")
 
 CLUSTERS = [
     ("📄 Document Intelligence", "Ingest → read with Claude vision → validate → verdict. Injection-resistant.",

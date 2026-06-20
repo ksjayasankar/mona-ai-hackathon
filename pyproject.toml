@@ -17,6 +17,7 @@ dependencies = [
     "requests>=2.31",
     "moviepy>=2.0",
     "gtts>=2.5",
+    "google-genai>=2.9.0",
 ]
 
 [tool.uv]

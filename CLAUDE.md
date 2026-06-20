@@ -24,7 +24,7 @@ hackathon_problems_20260620/  the customer test data (read-only)
 - `core.ingest.file_to_blocks(path)` / `bytes_to_blocks(data, suffix)` → Claude content blocks for **pdf / png / jpg / docx / xlsx / txt**. Claude reads PDFs & images **natively — do not add OCR (Tesseract etc.)**.
 - `core.guard` → prompt-injection defense. Any agent that reads third-party email/docs: put `guard.SAFE_SYSTEM` in the system prompt and `guard.wrap(text)` around untrusted text; surface `guard.scan(text)`.
 - `core.ui.page_setup("<customer_key>")` renders the branded header; `ui.require_key()`, `ui.confidence(pct)`.
-- `core.config.CUSTOMERS` = branding/brief per problem. `core.config.PATHS` = data file shortcuts. `core.config.MODEL` (Sonnet 4.6 default) / `MODEL_SMART` (Opus 4.8).
+- `core.config.CUSTOMERS` = branding/brief per problem. `core.config.PATHS` = data file shortcuts. `core.config.MODEL` (Gemini 2.5 Flash default) / `MODEL_SMART` (Gemini 2.5 Pro).
 
 ## HARD RULES for subagents (prevent merge conflicts)
 1. **Own only your two files**: `agents/<name>.py` and `app/pages/<NN>_<...>.py` (+ optional `evals/<name>_eval.py`). Touch nothing else.
@@ -59,7 +59,7 @@ uv run python -m evals.permits_eval       # headless accuracy check
 ```
 
 ## Setup / keys
-Put your key in `.env` at repo root: `ANTHROPIC_API_KEY=…` (optional `ELEVENLABS_API_KEY` for nicer P6 TTS; gTTS is the free fallback). `.env` is gitignored.
+Put your key in `.env` at repo root: `GEMINI_API_KEY=…` (the LLM provider is Gemini, isolated entirely in `core/llm.py`). Optional `ELEVENLABS_API_KEY` for nicer P6 TTS; gTTS is the free fallback. `.env` is gitignored.
 
 ## Definition of done (per agent)
 Page loads in the suite · customer-branded header · runs on its sample data with **one upload/click** · returns a verdict a non-technical customer understands · checks every box in its row above.

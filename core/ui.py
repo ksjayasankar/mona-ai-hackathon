@@ -30,7 +30,7 @@ def require_key() -> bool:
     """Show a friendly banner if the API key is missing. Returns True if ok to run."""
     if config.HAS_KEY:
         return True
-    st.warning("🔑 No `ANTHROPIC_API_KEY` set. Paste your key into the `.env` file at the repo root, then rerun.")
+    st.warning("🔑 No `GEMINI_API_KEY` set. Paste your Gemini key into the `.env` file at the repo root, then rerun.")
     return False
 
 

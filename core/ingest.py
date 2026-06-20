@@ -1,6 +1,6 @@
 """Turn any file into Claude content blocks.
 
-Claude reads PDFs and images natively (vision), so we deliberately avoid a heavy OCR
+Gemini reads PDFs and images natively (vision), so we deliberately avoid a heavy OCR
 stack. DOCX/XLSX get a light text extraction. Returns a list of content blocks ready
 to pass to core.llm.ask/extract.
 """

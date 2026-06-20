@@ -18,12 +18,12 @@ DATA_OUT.mkdir(exist_ok=True)
 
 load_dotenv(REPO_ROOT / ".env")
 
-# ---- models (latest Claude; override via .env) ---------------------------
-# Sonnet 4.6 is the default workhorse: fast + cheap + native vision/PDF, ideal for
-# document extraction at demo volume. Opus 4.8 is available for heavier reasoning.
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
-MODEL_SMART = os.getenv("ANTHROPIC_MODEL_SMART", "claude-opus-4-8")
-HAS_KEY = bool(os.getenv("ANTHROPIC_API_KEY"))
+# ---- models (Gemini; override via .env) ----------------------------------
+# Gemini 2.5 Flash is the default workhorse: fast + cheap + native vision/PDF, ideal
+# for document extraction at demo volume. 2.5 Pro is available for heavier reasoning.
+MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL_SMART = os.getenv("GEMINI_MODEL_SMART", "gemini-2.5-pro")
+HAS_KEY = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
 
 # ---- data file shortcuts -------------------------------------------------
 P = PROBLEMS_DIR

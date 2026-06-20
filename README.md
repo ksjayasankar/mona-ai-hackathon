@@ -6,7 +6,7 @@ Ten customer feature requests, solved as ten agents in **one Streamlit app**. Bu
 
 ```bash
 uv sync
-echo "ANTHROPIC_API_KEY=sk-…" >> .env      # paste your key
+echo "GEMINI_API_KEY=…" >> .env             # paste your key
 uv run streamlit run app/Home.py
 ```
 
@@ -22,7 +22,7 @@ Open the sidebar → pick a customer → upload a file or click a sample.
 
 ## Stack
 
-Python · [uv](https://docs.astral.sh/uv/) · Streamlit · Anthropic Claude (native vision/PDF — no OCR stack) · pydantic. See `CLAUDE.md` for architecture and conventions.
+Python · [uv](https://docs.astral.sh/uv/) · Streamlit · Google Gemini 2.5 Flash (native vision/PDF — no OCR stack) · pydantic. The LLM provider lives entirely in `core/llm.py`. See `CLAUDE.md` for architecture and conventions.
 
 ## Layout
 
