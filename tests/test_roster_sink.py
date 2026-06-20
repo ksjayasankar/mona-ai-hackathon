@@ -35,10 +35,46 @@ def test_xlsx_sink_push_then_record_fill(tmp_path):
 
 
 def test_get_sink_defaults_to_xlsx_without_creds(monkeypatch):
+    monkeypatch.delenv("GOOGLE_APPS_SCRIPT_URL", raising=False)
     monkeypatch.delenv("GOOGLE_SHEETS_ID", raising=False)
     monkeypatch.delenv("GOOGLE_SHEETS_CREDENTIALS_JSON", raising=False)
     assert isinstance(get_sink(), XlsxSink)
     assert isinstance(SyncResult("xlsx", True, None), SyncResult)
+
+
+def test_get_sink_prefers_apps_script(monkeypatch, tmp_path):
+    # Apps Script wins even when gspread creds are also present
+    creds = tmp_path / "svc.json"
+    creds.write_text("{}")
+    monkeypatch.setenv("GOOGLE_APPS_SCRIPT_URL", "https://script.google.com/macros/s/x/exec")
+    monkeypatch.setenv("GOOGLE_SHEETS_ID", "sheet123")
+    monkeypatch.setenv("GOOGLE_SHEETS_CREDENTIALS_JSON", str(creds))
+    assert type(get_sink()).__name__ == "AppsScriptSink"
+
+
+def test_apps_script_sink_posts_fill_payload(monkeypatch):
+    import services.roster_sink_apps_script as a
+    captured = {}
+
+    def fake_post(url, payload):
+        captured["url"], captured["payload"] = url, payload
+        return {"ok": True, "url": "https://docs.google.com/spreadsheets/d/abc/edit"}
+
+    monkeypatch.setattr(a, "_post", fake_post)
+    monkeypatch.setenv("GOOGLE_APPS_SCRIPT_URL", "https://script/exec")
+    monkeypatch.setenv("GOOGLE_APPS_SCRIPT_SECRET", "s3cret")
+    sink = a.AppsScriptSink()
+    res = sink.record_fill(employee_id="HOSP-2007", name="Anya", day_label="Sat 06/20",
+                           code="N", when=datetime(2026, 6, 20, 19, 0))
+    assert res.ok and res.target == "google_sheets" and res.link.endswith("/edit")
+    p = captured["payload"]
+    assert p["action"] == "fill" and p["secret"] == "s3cret"
+    assert p["employee_id"] == "HOSP-2007" and p["code"] == "N" and p["day_label"] == "Sat 06/20"
+
+
+def test_apps_script_module_import_is_safe():
+    import services.roster_sink_apps_script as a
+    assert hasattr(a, "AppsScriptSink")
 
 
 def test_get_sink_selects_google_when_env_set(monkeypatch, tmp_path):
