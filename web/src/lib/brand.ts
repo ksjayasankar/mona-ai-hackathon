@@ -29,7 +29,7 @@ export const STATUS_LABEL: Record<AgentStatus, string> = {
 export const TENANTS: Tenant[] = [
   {
     key: "globus", n: 1, company: "Globus Group", city: "St. Wendel", dept: "Finance",
-    color: "#0a7d3f", icon: "🧾", agent: "Invoice Triage Agent", status: "locked",
+    color: "#0a7d3f", icon: "🧾", agent: "Invoice Triage Agent", status: "live", href: "/globus",
     promise: "Reads any invoice, extracts the key fields, and routes it to the right department for a one-click confirm.",
   },
   {

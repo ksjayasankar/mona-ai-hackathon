@@ -39,10 +39,11 @@ keep the other 7 as polished prototypes that migrate in over time.
     open `/uks`. Tests: `uv run pytest tests/test_shift.py`. No new pip deps (Twilio via REST/httpx; SSE
     via StreamingResponse). Files: `agents/shift.py`, `services/shift.py`, `api/routes/shift.py`,
     `web/src/app/uks/**`, `core/models/shift.py` (+ alembic `p2shiftcols01`).
-- 🟡 **Phase 2 — remaining**: P1 Globus (WIP), P10 hardening.
-  - **P5/P6/P7/P9 now have localhost web pages** (stateless: web → API → the existing prototype agent, no DB),
-    matched to the design system: `/kohlpharma`, `/theiss-reels`, `/theiss-analytics`, `/theiss-gaps`.
-    **9 of 10 agents are live in the web product** (only P1 Globus pending). Routes: `/agents/{interview,reels,analytics,gaps}`.
+- 🟡 **Phase 2 — remaining: P10 hardening only.** **P1 Globus — MERGED ✅** (`feat/invoices`):
+  grounded multi-invoice split + vendor/invoice#/total/date dedupe + human-confirm gate; web page at `/globus`.
+  - **ALL 10 agents are now live in the web product** (`/globus` `/uks` `/leistenschneider` `/persowerk`
+    `/kohlpharma` `/theiss-reels` `/theiss-analytics` `/theiss-pricing` `/theiss-gaps` `/rheinmetall`).
+  - **P5/P6/P7/P9** are stateless localhost pages (web → API → the prototype agent, no DB), design-system matched.
   - **P8 Theiss pricing — MERGED ✅** (`feat/pricing`); **P3 Leistenschneider — MERGED ✅** (`feat/permits`).
   - **P10 Rheinmetall hardening is spec-locked** (see "Flagship decision — P10") — not yet built (6th worktree).
   - **P1 Globus invoices is spec-locked** (see "Flagship decision — P1") — build in progress in `hk-invoices` (uncommitted).
