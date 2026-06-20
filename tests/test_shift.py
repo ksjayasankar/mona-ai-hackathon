@@ -176,3 +176,66 @@ def test_outreach_simulated_send_and_escalate():
         assert logs[0].status == "sent" and logs[0].token and logs[1].status == "queued"
     esc = shift_svc.escalate(tenant, gid)
     assert esc["sent"]["seq"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Task 6 — race-safe first-accept lock + decline
+# ---------------------------------------------------------------------------
+import threading  # noqa: E402
+
+
+def _seed_gap_with_outreach(slug):
+    tenant = get_or_create_tenant(slug, slug)
+    shift_svc.seed_staff(tenant)
+    gid = shift_svc.create_gap(tenant, structured=dict(_FELIX))
+    shift_svc.start_outreach(tenant, gid)
+    return tenant, gid
+
+
+def _tokens(gid, n=2):
+    from sqlmodel import select
+    with Session(engine) as s:
+        toks = [l.token for l in s.exec(select(OutreachLog).where(OutreachLog.gap_id == gid)
+                                        .order_by(OutreachLog.seq)).all()]
+    return toks[:n]
+
+
+def test_first_accept_locks_gap_and_flips_schedule():
+    tenant, gid = _seed_gap_with_outreach("race-uks1")
+    t0, t1 = _tokens(gid, 2)
+    r0 = shift_svc.accept(t0)
+    assert r0["result"] == "confirmed"
+    # a late reply from candidate #1 (e.g. after escalation) must NOT double-fill
+    r1 = shift_svc.accept(t1)
+    assert r1["result"] == "already_filled"
+    state = shift_svc.gap_state(tenant, gid)
+    assert state["gap"]["status"] == "filled" and state["filled_by"]
+    # schedule flipped: the winner now shows the night shift on that day
+    with Session(engine) as s:
+        winner = s.get(Staff, state["filled_by"]["id"])
+        assert winner.shift_grid.get("Sat 06/20") == "N"
+
+
+def test_decline_then_accept_other():
+    tenant, gid = _seed_gap_with_outreach("race-uks-dec")
+    t0, t1 = _tokens(gid, 2)
+    assert shift_svc.decline(t0)["result"] == "declined"
+    assert shift_svc.accept(t1)["result"] == "confirmed"
+
+
+def test_concurrent_accepts_exactly_one_winner():
+    tenant, gid = _seed_gap_with_outreach("race-uks2")
+    toks = _tokens(gid, 3)
+    results, barrier = [], threading.Barrier(len(toks))
+
+    def go(tok):
+        barrier.wait()                       # maximize contention
+        results.append(shift_svc.accept(tok)["result"])
+
+    threads = [threading.Thread(target=go, args=(t,)) for t in toks]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert results.count("confirmed") == 1
+    assert results.count("already_filled") == len(toks) - 1

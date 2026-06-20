@@ -315,3 +315,78 @@ def escalate(tenant_id: str, gap_id: str) -> dict:
         staff = s.get(Staff, nxt.staff_id)
         sent = _send_seq(s, gap, nxt, staff)
     return {"sent": sent, **gap_state(tenant_id, gap_id)}
+
+
+# --------------------------------------------------------------------------
+# ACCEPT — race-safe first-accept lock (single atomic UPDATE, rowcount guard)
+# --------------------------------------------------------------------------
+def accept(token: str) -> dict:
+    """First accept wins. The claim is one atomic SQL UPDATE guarded on status='open';
+    the DB guarantees exactly one concurrent statement matches, so a late reply after
+    escalation (or two simultaneous taps) can never double-fill the gap."""
+    with Session(db_engine) as s:
+        log_row = s.exec(select(OutreachLog).where(OutreachLog.token == token)).first()
+        if not log_row:
+            return {"result": "invalid", "detail": "unknown or expired link"}
+        gap = s.get(ShiftGap, log_row.gap_id)
+        if not gap:
+            return {"result": "invalid", "detail": "gap missing"}
+
+        # atomic claim: only the first caller flips open -> filled (filled_at set via ORM after)
+        res = s.execute(
+            text("UPDATE shiftgap SET status='filled', version=version+1, "
+                 "filled_by_staff_id=:sid WHERE id=:gid AND status='open'"),
+            {"sid": log_row.staff_id, "gid": gap.id})
+        won = res.rowcount == 1
+        s.commit()
+
+        if not won:
+            log_row.status = "closed"
+            log_row.responded_at = _now()
+            s.add(log_row); s.commit()
+            s.refresh(gap)
+            winner = s.get(Staff, gap.filled_by_staff_id) if gap.filled_by_staff_id else None
+            return {"result": "already_filled", "gap_id": gap.id,
+                    "filled_by": winner.name if winner else None}
+
+        # we won: stamp filled_at, accept this log, close the others, flip the schedule
+        s.refresh(gap)
+        gap.filled_at = _now()
+        s.add(gap)
+        log_row.status = "accepted"
+        log_row.responded_at = _now()
+        s.add(log_row)
+        for other in s.exec(select(OutreachLog).where(OutreachLog.gap_id == gap.id,
+                            OutreachLog.id != log_row.id)).all():
+            if other.status in ("queued", "sent"):
+                other.status = "closed"
+                s.add(other)
+        staff = s.get(Staff, log_row.staff_id)
+        if staff and gap.day_label:                      # schedule flip (reassign dict so JSON change is tracked)
+            grid = dict(staff.shift_grid or {})
+            grid[gap.day_label] = "N" if gap.shift == "night" else "D"
+            staff.shift_grid = grid
+            staff.scheduled_hours_next7 = (staff.scheduled_hours_next7 or 0) + (gap.shift_hours or 12)
+            s.add(staff)
+        s.commit()
+        staff_name = staff.name if staff else None
+        staff_phone = staff.phone if staff else ""
+        gap_shift, gap_day, gap_id_val, staff_id_val = gap.shift, gap.day_label, gap.id, log_row.staff_id
+    # confirmation SMS (real or simulated), outside the txn
+    if staff_name:
+        send_sms(staff_phone or "", f"Thanks {staff_name.split()[0]}! You're confirmed for the "
+                                    f"{gap_shift} shift {gap_day}. See you then. — UKS staffing")
+    return {"result": "confirmed", "gap_id": gap_id_val,
+            "staff_id": staff_id_val, "staff_name": staff_name}
+
+
+def decline(token: str) -> dict:
+    with Session(db_engine) as s:
+        log_row = s.exec(select(OutreachLog).where(OutreachLog.token == token)).first()
+        if not log_row:
+            return {"result": "invalid"}
+        if log_row.status in ("queued", "sent"):
+            log_row.status = "declined"
+            log_row.responded_at = _now()
+            s.add(log_row); s.commit()
+        return {"result": "declined", "gap_id": log_row.gap_id}
