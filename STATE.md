@@ -34,6 +34,34 @@ keep the other 7 as polished prototypes that migrate in over time.
 - `agents/*.py` stay **PURE logic** (no web/db imports). Persistence + auth live in `api/` + services.
 - Keep the Streamlit app (`app/`) working during migration; retire it last.
 
+## Flagship decisions — P2 & P4 (locked via /plan-eng-review)
+Both EXTEND the monorepo as worktree flagships (reuse core/agent + db + auth + the
+shift/fraud tables). Dashboards are Next.js pages under `web/`; P2's needs SSE for live
+status, P4's is a static result view + history.
+
+**P2 UKS — shift replacement (action agent)**
+- Core = deterministic ELIGIBILITY engine with ArbZG compliance baked in (qualified +
+  not-already-on-shift + ≥11h rest since last shift end [§5] + under weekly cap [§3]),
+  then fairness ranking (recent overtime, shifts this week). This is the substance beat.
+- Outreach = SMS/WhatsApp ONLY, **no live voice call** (deliberate de-risk). Sequential:
+  contact #1, escalate to #2 on timeout (short, manually-triggerable for the demo).
+- Accept = magic-link in the SMS → accept page → first-accept **transactionally locks**
+  the ShiftGap (race-safe); losers told "filled". (default; SMS-reply parse is the alt.)
+- Send via real Twilio SMS for the demo (a text lands on a real phone), simulated fallback.
+- Live dashboard via SSE: ranked candidates + why-eligible, outreach status, schedule flips on accept.
+- Out of scope: voice/Vapi, real WhatsApp Business API (sandbox or SMS only).
+
+**P4 Persowerk — CV/cert fraud SIGNALS (human-review, never auto-reject)**
+- Forensics (deterministic): PDF metadata + incremental-update edit history + Producer
+  chain; image EXIF; ELA heatmap (labelled a weak signal, not proof).
+- Consistency: timeline overlaps/gaps, CV vs cert vs claims.
+- Verify (agent tool-loop): github_lookup (public API; handle parsed from the CV) +
+  company/role web check (firecrawl). Registry/OpenBadges only where a public API exists, skip honestly.
+- Output: risk score with a per-signal EVIDENCE span; UI frames everything as
+  "signal for a recruiter, not a verdict". NO AI-text-detector reject signal (unreliable
+  + biased against non-native writers — stated openly; this is the maturity beat).
+- Out of scope: real issuer-registry verification at scale, LinkedIn scraping.
+
 ## Target architecture (monorepo)
 ```
 core/   db · models/ · auth · agent (tool-loop) · rag · tools/ · llm · guard · ingest · config
