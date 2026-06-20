@@ -24,8 +24,13 @@ keep the other 7 as polished prototypes that migrate in over time.
     + structured gap intake; sequential **Twilio-or-simulated SMS** outreach with magic-link accept +
     manual/timer escalate; **race-safe first-accept lock** (single atomic `UPDATE … WHERE status='open'`,
     rowcount guard — a late reply after escalation can't double-fill); **live SSE dashboard** + accept page;
-    schedule flips on accept. Tested offline (ollama + simulated Twilio + throwaway SQLite): compliance
-    exclusions, ranking, the first-accept race (threaded), and the API happy path. Run: API
+    schedule flips on accept. **Real-world round-trip**: on accept the roster update lands in a live
+    **Google Sheet** (gspread, service-account) or an **xlsx write-back** fallback (`data/hospital_schedule_updated.xlsx`,
+    highlighted cell + audit sheet) when no creds — `services/roster_sink.py`. **SMS/WhatsApp phone-mock intake**
+    + **clinical ops-console redesign** (UKS-branded) + a **live schedule grid** in `web/src/app/uks/`. Tested
+    offline (ollama + simulated Twilio + throwaway SQLite): compliance
+    exclusions, ranking, the first-accept race (threaded), the roster-sink (xlsx + selection + accept-never-crashes),
+    and the API happy path. Run: API
     `LLM_PROVIDER=ollama AUTH_MODE=dev uv run uvicorn api.main:app --port 8000`, web `cd web && npm run dev`,
     open `/uks`. Tests: `uv run pytest tests/test_shift.py`. No new pip deps (Twilio via REST/httpx; SSE
     via StreamingResponse). Files: `agents/shift.py`, `services/shift.py`, `api/routes/shift.py`,
