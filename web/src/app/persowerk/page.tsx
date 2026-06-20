@@ -68,6 +68,7 @@ export default function PersowerkPage() {
         (k) => `${report.by_category[k].length} ${LENS[k].label.toLowerCase()}`,
       )
     : [];
+  const forensic = report?.by_category.forensic ?? [];
 
   return (
     <main className="pw min-h-screen">
@@ -159,7 +160,8 @@ export default function PersowerkPage() {
                     <h2 className="mt-2 text-2xl font-bold tracking-tight">{band.label}</h2>
                     <p className="mt-1 text-sm text-[var(--muted)]">
                       {report.candidate_name ? <strong className="text-[var(--ink)]">{report.candidate_name}</strong> : "This candidate"}
-                      {breakdown.length ? ` · ${breakdown.join(" · ")}` : " · no signals found"}
+                      {breakdown.length ? ` · ${breakdown.join(" · ")}` : " · nothing notable in the review"}
+                      {forensic.length ? ` · ${forensic.length} technical check${forensic.length === 1 ? "" : "s"}` : ""}
                     </p>
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {report.verify_ran && <Stat>✓ deep-verified</Stat>}
@@ -217,7 +219,20 @@ export default function PersowerkPage() {
                   </div>
                 )}
 
-                <details className="pw-card pw-reveal p-4 text-xs" style={{ ["--d" as string]: "320ms" }}>
+                {/* low-level forensics — kept out of the recruiter's main flow on purpose */}
+                {forensic.length > 0 && (
+                  <details className="pw-card pw-reveal p-4" style={{ ["--d" as string]: "300ms" }}>
+                    <summary className="cursor-pointer text-sm font-medium">
+                      🔬 Technical document checks ({forensic.length})
+                      <span className="ml-1 font-normal text-[var(--muted)]">— for a security / IT reviewer, safe to skip</span>
+                    </summary>
+                    <div className="mt-3 space-y-2.5">
+                      {forensic.map((s, i) => <SignalRow key={i} s={s} />)}
+                    </div>
+                  </details>
+                )}
+
+                <details className="pw-card pw-reveal p-4 text-xs" style={{ ["--d" as string]: "340ms" }}>
                   <summary className="cursor-pointer font-medium">Extracted data (raw)</summary>
                   <pre className="pw-mono mt-2 overflow-x-auto rounded-lg bg-[var(--evidence)] p-3 text-[11px] leading-relaxed">
                     {JSON.stringify(report.extraction, null, 2)}

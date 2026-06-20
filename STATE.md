@@ -26,8 +26,11 @@ keep the other 7 as polished prototypes that migrate in over time.
     (LOW/MED/HIGH + 0-100, injection forces HIGH, weak signals can never alone reach HIGH).
     Each signal carries `{name, severity, category, evidence, why, weak}`. Persists
     Candidate/Certificate/VerificationRecord (tenant-scoped) + AuditLog. Next.js dashboard at
-    `/persowerk` groups signals by category with their evidence span; explicitly **no
-    AI-text-detector** (unreliable + biased against non-native writers — the maturity beat).
+    `/persowerk` groups signals by recruiter-facing lens (story & timeline, credentials,
+    writing style, public footprint, tampering) with their evidence span; low-level forensics
+    are tucked into a collapsed "Technical document checks" section so the jargon stays out of
+    the recruiter's way. AI-writing likelihood is shown as a WEAK, capped, caveated hint
+    (customer-requested), never a reject.
     Offline tests green (`uv run pytest`, 28 passed): forensics on a generated edited PDF,
     consistency on overlapping dates, mocked `github_lookup`, tenant-scoped persistence.
     Run: `POST /agents/fraud/assess` (multipart cv + certs + github_handle), web `/persowerk`.
@@ -71,8 +74,12 @@ status, P4's is a static result view + history.
 - Verify (agent tool-loop): github_lookup (public API; handle parsed from the CV) +
   company/role web check (firecrawl). Registry/OpenBadges only where a public API exists, skip honestly.
 - Output: risk score with a per-signal EVIDENCE span; UI frames everything as
-  "signal for a recruiter, not a verdict". NO AI-text-detector reject signal (unreliable
-  + biased against non-native writers — stated openly; this is the maturity beat).
+  "signal for a recruiter, not a verdict".
+- **AI-writing check (customer-requested override of the original "no AI-text" decision):**
+  an AI-generated-likelihood signal IS now shown — but as a WEAK, capped, caveated hint
+  (model read blended with deterministic stylometry), never a reject, with the openly-stated
+  bias caveat (over-flags polished / non-native English). The maturity beat moved from
+  "we don't do it" to "we do it honestly and refuse to let it auto-reject."
 - Out of scope: real issuer-registry verification at scale, LinkedIn scraping.
 
 ## Target architecture (monorepo)

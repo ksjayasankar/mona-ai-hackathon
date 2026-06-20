@@ -17,13 +17,16 @@ const SEV: Record<string, { dot: string; label: string }> = {
 };
 
 export const LENS: Record<string, { label: string; blurb: string; icon: string }> = {
-  forensic: { label: "Document forensics", blurb: "What the files themselves reveal", icon: "🔬" },
-  consistency: { label: "Story & timeline", blurb: "Does the history hold together", icon: "🧩" },
-  certificate: { label: "Credentials", blurb: "Are the certificates real and current", icon: "🎓" },
-  verification: { label: "Public footprint", blurb: "What public sources corroborate", icon: "🌐" },
   injection: { label: "Tampering attempt", blurb: "The document tried to manipulate the screener", icon: "🛡️" },
+  consistency: { label: "Story & timeline", blurb: "Does the work history hold together", icon: "🧩" },
+  certificate: { label: "Credentials", blurb: "Are the certificates real and current", icon: "🎓" },
+  writing: { label: "Writing style", blurb: "AI-generated likelihood — a weak, caveated hint", icon: "✍️" },
+  verification: { label: "Public footprint", blurb: "What public sources corroborate", icon: "🌐" },
+  forensic: { label: "Document forensics", blurb: "Low-level file checks for a security reviewer", icon: "🔬" },
 };
-export const LENS_ORDER = ["injection", "forensic", "consistency", "certificate", "verification"];
+// lenses a recruiter reads first; "forensic" is intentionally NOT here — it's tucked into a
+// collapsed technical section so the jargon doesn't get in the recruiter's way.
+export const LENS_ORDER = ["injection", "consistency", "certificate", "writing", "verification"];
 
 function humanize(name: string) {
   const s = name.replace(/_/g, " ");

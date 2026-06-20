@@ -77,6 +77,17 @@ class CVClaims(BaseModel):
     languages: list[str] = Field(default_factory=list, description="Spoken languages claimed")
     email: str | None = Field(default=None, description="Candidate email if present")
     github: str | None = Field(default=None, description="GitHub URL or handle if present on the CV")
+    writing_sample: str | None = Field(
+        default=None,
+        description="Verbatim representative prose from the CV (the summary plus 2-3 of the most "
+        "descriptive sentences), used to assess writing style. Copy exactly, do not paraphrase.")
+    ai_writing_likelihood: int | None = Field(
+        default=None, ge=0, le=100,
+        description="CALIBRATED estimate (0-100) that the prose was AI-generated. Be FAIR: polished "
+        "or non-native English is NOT evidence of AI. Only raise it for uniform, generic, "
+        "specifics-free phrasing. Leave null if unsure.")
+    ai_writing_reasons: list[str] = Field(
+        default_factory=list, description="Concrete cues behind ai_writing_likelihood. Empty if none.")
     extraction_confidence: float = Field(
         description="0-100, how legible/complete the CV was", ge=0, le=100
     )
@@ -525,3 +536,88 @@ def injection_signals(texts: list[str]) -> list[Signal]:
                                   "instructions'). Legitimate CVs never do this — strong tampering/fraud flag."))
             break
     return out
+
+
+# --------------------------------------------------------------------------- #
+# AI-writing likelihood — deterministic stylometry, optionally blended with the
+# model's holistic read. DELIBERATELY surfaced as a WEAK, capped signal: style-based
+# AI detection is unreliable and over-flags polished / non-native English writing, so
+# it can never alone reach HIGH and the UI frames it as a hint, never a reject.
+# --------------------------------------------------------------------------- #
+_AI_LEXICON = [
+    "results-driven", "results oriented", "detail-oriented", "detail oriented", "leverage",
+    "leveraged", "cutting-edge", "cutting edge", "seamless", "synergy", "synergies",
+    "passionate about", "spearheaded", "proven track record", "team player", "fast-paced",
+    "fast paced", "robust", "comprehensive", "deliver value", "value-add", "innovative",
+    "thrive", "thrives", "demonstrated ability", "strong work ethic", "self-starter",
+    "go-getter", "stakeholder", "holistic", "best-in-class", "world-class", "game-changer",
+    "empower", "tapestry", "underscore", "testament", "delve", "actionable insights",
+    "mission-critical", "at the forefront", "commitment to excellence", "deep dive",
+    "wide range of", "dynamic", "drive value", "driving synergy",
+]
+
+
+def ai_writing_heuristic(text: str) -> tuple[int, list[str]]:
+    """Stylometric AI-likelihood (0-100) + concrete reasons. Deterministic, explainable."""
+    import statistics
+
+    text = text or ""
+    words = re.findall(r"[A-Za-z']+", text)
+    nw = len(words)
+    if nw < 25:
+        return 0, ["too little prose to assess writing style"]
+    low = text.lower()
+    reasons: list[str] = []
+    score = 0
+
+    lex = sum(low.count(k) for k in _AI_LEXICON)
+    if lex:
+        score += min(40, round(lex / nw * 100 * 8))
+        reasons.append(f"{lex} generic buzzword/phrase(s)")
+
+    em = text.count("—") + text.count(" – ")
+    if em / nw * 100 > 0.8:
+        score += min(20, round(em / nw * 100 * 12))
+        reasons.append(f"em-dash overuse ({em} in {nw} words)")
+
+    sents = [s for s in re.split(r"[.!?]+", text) if s.strip()]
+    lens = [len(s.split()) for s in sents]
+    if len(lens) >= 4 and statistics.pstdev(lens) < 3.0:
+        score += 15
+        reasons.append("very uniform sentence length (low burstiness)")
+
+    triads = len(re.findall(r"\b[\w-]+,\s+[\w-]+,?\s+and\s+[\w-]+", text))
+    if triads:
+        score += min(15, triads * 5)
+        reasons.append(f"{triads} 'rule-of-three' list(s)")
+
+    if re.search(r"\bnot (just|only)\b[^.]*\bbut\b", low):
+        score += 10
+        reasons.append("negative parallelism ('not just X but Y')")
+
+    return min(100, score), reasons
+
+
+def ai_writing_signals(claims: CVClaims) -> list[Signal]:
+    """Blend the stylometric heuristic with the model's read (if any) into one WEAK signal."""
+    text = (claims.writing_sample or claims.summary or "").strip()
+    if len(text.split()) < 25:
+        return []
+    h_score, h_reasons = ai_writing_heuristic(text)
+    model = claims.ai_writing_likelihood
+    if model is not None:
+        combined = round(0.5 * h_score + 0.5 * max(0, min(100, model)))
+        reasons = list(claims.ai_writing_reasons) + h_reasons
+    else:
+        combined = h_score
+        reasons = h_reasons
+    if combined < 35:
+        return []
+    sev = "medium" if combined >= 60 else "low"
+    top = "; ".join(dict.fromkeys(r for r in reasons if r)) or "stylometric cues"
+    return [Signal(
+        name="ai_generated_writing", severity=sev, category="writing", weak=True,
+        evidence=f"AI-writing likelihood ~{combined}%. Indicators: {top}.",
+        why="WEAK signal — shown to inform, never to reject. Style-based AI detection is unreliable "
+            "and over-flags polished or non-native English writers, so we cap it and you should "
+            "weight it lightly. Treat it as a prompt to read the prose closely, not as proof.")]

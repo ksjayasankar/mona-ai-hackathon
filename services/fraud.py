@@ -27,7 +27,7 @@ from sqlmodel import Session, desc, select
 
 from agents import fraud as A
 from agents.fraud import (CertFields, CVClaims, RiskAssessment, VerifyFindings,
-                          cert_signals, consistency_signals, cross_signals,
+                          ai_writing_signals, cert_signals, consistency_signals, cross_signals,
                           findings_to_signals, injection_signals, score_risk)
 from core import guard, ingest, llm
 from core.agent import Tool, run_agent
@@ -98,17 +98,22 @@ def make_github_tool() -> Tool:
 CV_EXTRACT_SYSTEM = A.CV_EXTRACT_SYSTEM
 CERT_SYSTEM = A.CERT_SYSTEM
 METHODOLOGY = (
-    "These are SIGNALS to help a human recruiter decide — not an automated accept/reject. "
-    "We deliberately do NOT run an AI-text 'detector': those tools are unreliable and biased "
-    "against non-native English writers, so a clean-but-polished CV is never penalised here. "
-    "Forensic image analysis (ELA) is labelled a weak hint and capped — never proof on its own."
+    "These are SIGNALS to help a human recruiter decide — never an automated accept/reject. "
+    "The AI-writing likelihood is a WEAK, capped hint: style-based AI detection is unreliable and "
+    "over-flags polished or non-native English writers, so we never reject on it and you should "
+    "weight it lightly. Image forensics (ELA) is weak and capped the same way. Low-level document "
+    "checks live under 'Technical checks' for a security reviewer — skip them if they don't help you."
 )
 
 
 def _extract_cv(blocks: list[dict], provider: str | None) -> CVClaims:
     payload = blocks + [{"type": "text", "text":
                          "Extract the candidate's name, email, GitHub URL/handle, roles (with dates as "
-                         "written), skills, languages and summary."}]
+                         "written), skills, languages and summary. Also copy a verbatim writing_sample "
+                         "(the summary plus the 2-3 most descriptive sentences) and give a CALIBRATED "
+                         "ai_writing_likelihood (0-100) with concrete reasons — be fair: polished or "
+                         "non-native English is NOT evidence of AI; only flag uniform, generic, "
+                         "specifics-free phrasing."}]
     return llm.extract(CVClaims, payload, system=CV_EXTRACT_SYSTEM, provider=provider)
 
 
@@ -162,6 +167,7 @@ def build_report(*, claims: CVClaims, cert_fields: list[CertFields], forensic_si
         signals += cert_signals(c, today=today)
     inj_texts = [claims.summary or ""] + claims.skills + [r.title or "" for r in claims.roles]
     signals += injection_signals(inj_texts)
+    signals += ai_writing_signals(claims)
     if verify_findings is not None:
         signals += findings_to_signals(verify_findings)
 

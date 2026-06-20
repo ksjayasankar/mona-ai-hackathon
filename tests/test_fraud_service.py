@@ -33,7 +33,8 @@ def test_build_report_assembles_and_scores():
     assert "timeline_overlap" in names
     assert rep.risk in ("LOW", "MEDIUM", "HIGH")
     assert "not an automated verdict" in rep.summary or "signal" in rep.methodology_note.lower()
-    assert "AI-text" in rep.methodology_note  # the disclosure is present
+    # the AI-writing caveat (weak, never reject) is disclosed
+    assert "weak" in rep.methodology_note.lower() and "never" in rep.methodology_note.lower()
 
 
 def test_persist_and_history_tenant_scoped():
