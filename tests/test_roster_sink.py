@@ -39,3 +39,20 @@ def test_get_sink_defaults_to_xlsx_without_creds(monkeypatch):
     monkeypatch.delenv("GOOGLE_SHEETS_CREDENTIALS_JSON", raising=False)
     assert isinstance(get_sink(), XlsxSink)
     assert isinstance(SyncResult("xlsx", True, None), SyncResult)
+
+
+def test_get_sink_selects_google_when_env_set(monkeypatch, tmp_path):
+    creds = tmp_path / "svc.json"
+    creds.write_text("{}")
+    monkeypatch.setenv("GOOGLE_SHEETS_ID", "sheet123")
+    monkeypatch.setenv("GOOGLE_SHEETS_CREDENTIALS_JSON", str(creds))
+    import services.roster_sink_google as g
+    monkeypatch.setattr(g, "_open_spreadsheet", lambda sid, creds_path: object())  # no network
+    sink = get_sink()
+    assert type(sink).__name__ == "GoogleSheetsSink"
+
+
+def test_google_sink_import_is_safe_without_creds():
+    # importing the module must never require creds or network
+    import services.roster_sink_google as g
+    assert hasattr(g, "GoogleSheetsSink")
