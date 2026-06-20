@@ -19,6 +19,7 @@ keep the other 7 as polished prototypes that migrate in over time.
   the template flagship worktrees copy.
 - ⬜ **Phase 1 — flagships** (parallel git worktrees): P2 UKS, P4 Persowerk.
 - ⬜ **Phase 2**: Theiss cluster (P7/P8/P9) → lighter (P1/P3/P5) → P6 reels.
+  **P8 Theiss pricing is spec-locked** (see "Flagship decision — P8") — ready to build as a 4th worktree.
 
 ## Locked decisions — do not re-litigate
 - **Backend** FastAPI (`api/`). **Frontend** Next.js App Router + TypeScript + Tailwind + shadcn/ui (`web/`).
@@ -61,6 +62,39 @@ status, P4's is a static result view + history.
   "signal for a recruiter, not a verdict". NO AI-text-detector reject signal (unreliable
   + biased against non-native writers — stated openly; this is the maturity beat).
 - Out of scope: real issuer-registry verification at scale, LinkedIn scraping.
+
+## Flagship decision — P8 (locked via /plan-eng-review)
+**P8 Dr. Theiss — signal-driven dynamic pricing (human-approve; guardrails are authoritative)**
+EXTENDS the monorepo as a **4th parallel worktree** (`hk-pricing` / `feat/pricing`), fully
+disjoint from P2/P4. Owns: `agents/pricing.py`, `core/models/pricing.py` (+1 import line in
+`core/models/__init__.py`), `core/tools/signals.py`, `api/routes/pricing.py` (+ the one shared
+router line in `api/main.py`), `web/src/app/theiss-pricing/**`, `web/src/lib/api/pricing.ts`,
+`tests/test_pricing.py`. Build it anytime — shares no files with the P2/P4 worktrees.
+- **PDF-agnostic** (works for ANY uploaded catalog): `core.ingest` → `core.llm.extract` pulls
+  `{product, current_price, category, cost?}`; **signals attach to a fixed CATEGORY taxonomy,
+  never SKUs** (cold snap → `cold_remedy`+`vitamin_c`; pollen → `allergy`; heatwave → `sunscreen`).
+- **Decision flow = "LLM proposes, guardrails dispose."** Signals fetched via tools (HTTP, free,
+  not LLM). An **agent tool-loop reasons over signals+products to PROPOSE a per-product delta +
+  per-signal rationale**. A **deterministic guardrail layer then clamps/BLOCKs it and that gated
+  output is the AUTHORITATIVE, audited number** — never the raw LLM figure. Recommend-to-human
+  only; never auto-applies to a storefront.
+- **Guardrails (deterministic, unit-tested — lead with them, it's a health-goods story):**
+  %-band cap (±X% of catalog baseline, ALWAYS computable → primary); margin floor when cost is
+  present (optional); **anti-gouging BLOCK** — no price increase on essential-medicine categories
+  during a health-event demand spike. The block is a visible demo beat.
+- **Signals (pluggable `SignalConnector` interface):** WeatherConnector (Open-Meteo, free+keyless)
+  + HolidayConnector (Nager.Date, free+keyless) run LIVE; news/supply + football fixtures are
+  connectors **seeded from a cached snapshot** (firecrawl-pluggable when credited — it's 402 now).
+  Unconfigured connectors degrade honestly ("not configured"), never fake data.
+- **Budget guard (the agent-loop tax):** dev/test on **Ollama (free)**; `max_steps ≤ ~5`; one
+  structured pass where possible; cache every Gemini call; pre-bake the demo → stays inside ~60 calls/day.
+- **Output/UI:** product cards → recommended delta, the signals that drove it (evidence + source +
+  timestamp), guardrail status (applied / clamped / **BLOCKED**) + plain-English why, approve/reject
+  → audit trail. Wow beat: a live weather signal nudging price + a guardrail visibly blocking an
+  over-aggressive LLM proposal.
+- **Acceptance (CLAUDE.md P8):** external signals (weather/season/football/supply) ✅ · min/max
+  guardrails ✅ · rationale ✅.
+- **Out of scope:** real-time competitor scraping at scale, auto-apply to a live storefront/ERP, paid signal APIs.
 
 ## Target architecture (monorepo)
 ```
@@ -120,7 +154,12 @@ around it, not against it:
 - **Phase 1 flagships run in git worktrees**, one instance each, owning **disjoint files**:
   - P2 UKS → `agents/shift.py`, `api/routes/shift.py`, `core/models/shift.py`, `web/app/uks/**`
   - P4 Persowerk → `agents/fraud.py`, `api/routes/fraud.py`, `core/models/fraud.py`, `web/app/persowerk/**`
-  - **All flagship DB tables are pre-defined in `core/models/` during Phase 0** so worktrees never collide on schema.
+  - P8 Theiss pricing → `agents/pricing.py`, `api/routes/pricing.py`, `core/models/pricing.py`,
+    `core/tools/signals.py`, `web/src/app/theiss-pricing/**`, `web/src/lib/api/pricing.ts`
+  - **P2/P4 DB tables are pre-defined in `core/models/` (Phase 0).** P8 adds a NEW `core/models/pricing.py`
+    plus a single **append-only** import line in `core/models/__init__.py` — safe because P2/P4's lines
+    are already committed, so there's nothing to collide on. Its only other shared touch is the
+    `api/main` router line (the standard one-line flagship edit).
 - Don't edit shared files (`core/db`, `core/auth`, `core/agent`, `api/main`, `CLAUDE.md`, this file)
   from a flagship worktree without flagging it here first.
 - Commit in logical chunks; one PR per flagship; never push straight to `main`.
