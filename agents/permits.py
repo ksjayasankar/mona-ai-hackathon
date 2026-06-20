@@ -27,16 +27,19 @@ TODAY = date(2026, 6, 20)  # hackathon "today"; keep deterministic for the demo
 
 SYSTEM = (
     "You are a German immigration-document checker. You are shown a single document. "
-    "Decide whether it is a residence/work permit (Aufenthaltstitel / Aufenthaltserlaubnis / "
-    "Blue Card / work visa) and extract its fields exactly as printed. Do not invent values; "
-    "use null when a field is not present. Read dates in DD.MM.YYYY format."
+    "First decide whether it is a residence/work permit DOCUMENT (Aufenthaltstitel / "
+    "Aufenthaltserlaubnis / Blaue Karte EU / work visa) — it still COUNTS as one even if it "
+    "restricts or prohibits employment (e.g. a student permit under § 16b AufenthG). Set "
+    "is_work_permit=True for any such residence-permit document, and record work authorization "
+    "SEPARATELY in employment_allowed (look for 'Erwerbstätigkeit/Beschäftigung gestattet' vs "
+    "'nicht gestattet'). Extract fields exactly as printed; use null if absent. Dates are DD.MM.YYYY."
 )
 
 
 class PermitFields(BaseModel):
     """Fields read off a (possible) work/residence permit."""
 
-    is_work_permit: bool = Field(description="True only if this document is a residence/work permit")
+    is_work_permit: bool = Field(description="True if this is a residence/work permit document (Aufenthaltstitel/Aufenthaltserlaubnis/Blue Card/visa), EVEN IF it restricts or bans employment")
     document_type: str | None = Field(description="Printed document type, e.g. 'Aufenthaltserlaubnis'")
     holder_name: str | None = Field(description="Full name of the permit holder")
     nationality: str | None = None

@@ -11,12 +11,13 @@ Two entry points:
 Content blocks come from core.ingest in Anthropic-style dicts; _to_parts() translates
 them to Gemini Parts, so the same call works for a photo, a PDF, or plain text.
 
-Two defences against the Gemini FREE-TIER limits (~5 req/min AND a small daily cap):
-  1. CACHE  — identical (model, system, content) calls are served from disk, so a
-     re-run of the same document costs zero quota and returns instantly. This is what
-     makes the live demo bulletproof: pre-run a doc once, it replays free forever.
-  2. RETRY  — 429s retry with backoff (honouring the server delay), and an optional
-     LLM_MIN_INTERVAL throttle spaces calls out, so a batch never crashes — it waits.
+Free-tier survival (the key gives ~20 requests/DAY *per model*):
+  1. CACHE  — model-AGNOSTIC: identical (system, content) calls are served from disk
+     regardless of which model produced them, so re-runs cost zero quota and are instant.
+     This is what makes the live demo bulletproof.
+  2. FALLBACK CHAIN — when one model's daily cap is hit, roll to the next model
+     (config.MODEL_FALLBACKS) automatically. Per-minute 429s and transient 503s just
+     back off and retry the same model.
 """
 from __future__ import annotations
 
@@ -26,7 +27,6 @@ import json
 import os
 import re
 import time
-from pathlib import Path
 from typing import Type, TypeVar
 
 from google import genai
@@ -39,7 +39,7 @@ _client: genai.Client | None = None
 T = TypeVar("T", bound=BaseModel)
 
 _MIN_INTERVAL = float(os.getenv("LLM_MIN_INTERVAL", "0"))  # seconds between calls; 0 = off
-_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "4"))
+_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "3"))
 _CACHE_ON = os.getenv("LLM_CACHE", "1") != "0"
 _CACHE_DIR = config.DATA_OUT / "llm_cache"
 _last_call = [0.0]
@@ -57,9 +57,9 @@ def client() -> genai.Client:
     return _client
 
 
-# ---- cache ---------------------------------------------------------------
-def _key(kind: str, model: str, system: str, content) -> str:
-    payload = json.dumps([kind, model, system, content], sort_keys=True, default=str)
+# ---- cache (model-agnostic) ----------------------------------------------
+def _key(kind: str, system: str, content) -> str:
+    payload = json.dumps([kind, system, content], sort_keys=True, default=str)
     return hashlib.sha256(payload.encode()).hexdigest()[:32]
 
 
@@ -67,9 +67,7 @@ def _cache_get(key: str):
     if not _CACHE_ON:
         return None
     f = _CACHE_DIR / f"{key}.json"
-    if f.exists():
-        return json.loads(f.read_text())
-    return None
+    return json.loads(f.read_text()) if f.exists() else None
 
 
 def _cache_put(key: str, value) -> None:
@@ -100,9 +98,8 @@ def _gen_config(system: str, model: str, *, schema=None, max_tokens: int = 2000)
     if schema is not None:
         kwargs["response_mime_type"] = "application/json"
         kwargs["response_schema"] = schema
-    # Flash/Flash-Lite let us disable "thinking" — faster, cheaper, no thinking tokens
-    # eating the output budget on simple extraction.
-    if "flash" in (model or ""):
+    # Only the 2.5 Flash family supports the "thinking" toggle; 2.0 models reject it.
+    if "2.5-flash" in (model or ""):
         kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
     return types.GenerateContentConfig(**kwargs)
 
@@ -113,59 +110,76 @@ def _retry_delay(msg: str, attempt: int) -> float:
     return min(base + 2, 65)
 
 
-def _generate(model: str, contents, gconfig):
-    """Call Gemini with throttle + 429 retry/backoff."""
-    for attempt in range(_MAX_RETRIES + 1):
-        if _MIN_INTERVAL > 0:
-            wait = _MIN_INTERVAL - (time.monotonic() - _last_call[0])
-            if wait > 0:
-                time.sleep(wait)
-        _last_call[0] = time.monotonic()
-        try:
-            return client().models.generate_content(model=model, contents=contents, config=gconfig)
-        except errors.ClientError as e:
-            msg = str(e)
-            code = getattr(e, "code", None) or getattr(e, "status_code", None)
-            # daily-cap 429s won't clear by waiting — only retry the per-minute kind
-            per_minute = "PerMinute" in msg or "PerDay" not in msg
-            if (code == 429 or "RESOURCE_EXHAUSTED" in msg) and per_minute and attempt < _MAX_RETRIES:
-                time.sleep(_retry_delay(msg, attempt))
-                continue
-            raise
+def _chain(requested: str) -> list[str]:
+    out = []
+    for m in [requested, *config.MODEL_FALLBACKS]:
+        if m and m not in out:
+            out.append(m)
+    return out
+
+
+def _generate(requested: str, parts, system: str, schema, max_tokens: int):
+    """Call Gemini, rolling across the model fallback chain on daily-cap exhaustion."""
+    last = None
+    for model in _chain(requested):
+        gconfig = _gen_config(system, model, schema=schema, max_tokens=max_tokens)
+        for attempt in range(_MAX_RETRIES + 1):
+            if _MIN_INTERVAL > 0:
+                wait = _MIN_INTERVAL - (time.monotonic() - _last_call[0])
+                if wait > 0:
+                    time.sleep(wait)
+            _last_call[0] = time.monotonic()
+            try:
+                return client().models.generate_content(model=model, contents=parts, config=gconfig)
+            except errors.ServerError as e:  # 500/503 transient overload
+                last = e
+                if attempt < _MAX_RETRIES:
+                    time.sleep(min(2 ** attempt * 3 + 2, 30))
+                    continue
+                break  # give this model up, try next in chain
+            except errors.ClientError as e:
+                last = e
+                msg = str(e)
+                is429 = getattr(e, "code", None) == 429 or "RESOURCE_EXHAUSTED" in msg
+                if is429 and "PerDay" in msg:
+                    break  # daily cap on this model -> next model in chain
+                if is429 and attempt < _MAX_RETRIES:
+                    time.sleep(_retry_delay(msg, attempt))
+                    continue
+                raise
+    raise last if last else RuntimeError("generation failed")
 
 
 # ---- public API ----------------------------------------------------------
 def ask(prompt, system: str = "", model: str | None = None, max_tokens: int = 2000) -> str:
     """Free-form text completion. `prompt` may be a string or a list of content blocks."""
-    model = model or config.MODEL
     system = system or "You are a precise, concise assistant."
-    key = _key("ask", model, system, prompt)
+    key = _key("ask", system, prompt)
     cached = _cache_get(key)
     if cached is not None:
         return cached
     parts = _to_parts(prompt) if isinstance(prompt, list) else [types.Part(text=prompt)]
-    text = _generate(model, parts, _gen_config(system, model, max_tokens=max_tokens)).text or ""
+    text = _generate(model or config.MODEL, parts, system, None, max_tokens).text or ""
     _cache_put(key, text)
     return text
 
 
 def extract(schema: Type[T], content, system: str = "", model: str | None = None, max_tokens: int = 2000) -> T:
     """Force Gemini to return data matching `schema` (a pydantic model)."""
-    model = model or config.MODEL
     system = system or "Extract the requested fields accurately. If a field is unknown, use null."
-    key = _key(f"extract:{schema.__name__}", model, system, content)
+    key = _key(f"extract:{schema.__name__}", system, content)
     cached = _cache_get(key)
     if cached is not None:
         return schema.model_validate(cached)
     parts = _to_parts(content) if isinstance(content, list) else [types.Part(text=content)]
-    resp = _generate(model, parts, _gen_config(system, model, schema=schema, max_tokens=max_tokens))
+    resp = _generate(model or config.MODEL, parts, system, schema, max_tokens)
     parsed = getattr(resp, "parsed", None)
     if isinstance(parsed, schema):
-        _cache_put(key, parsed.model_dump())
-        return parsed
-    text = (resp.text or "").strip()
-    if text.startswith("```"):
-        text = text.split("```", 2)[1].lstrip("json").strip()
-    obj = schema.model_validate(json.loads(text))
+        obj = parsed
+    else:
+        text = (resp.text or "").strip()
+        if text.startswith("```"):
+            text = text.split("```", 2)[1].lstrip("json").strip()
+        obj = schema.model_validate(json.loads(text))
     _cache_put(key, obj.model_dump())
     return obj

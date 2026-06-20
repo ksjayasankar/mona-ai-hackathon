@@ -19,11 +19,17 @@ DATA_OUT.mkdir(exist_ok=True)
 load_dotenv(REPO_ROOT / ".env")
 
 # ---- models (Gemini; override via .env) ----------------------------------
-# Flash-Lite is the default workhorse: native vision/PDF, fast, and the most generous
-# FREE-TIER daily quota (gemini-2.5-flash's free cap is only ~20 req/day). Each model
-# has its own bucket, so MODEL_SMART (flash) is a separate fallback for harder jobs.
+# The free tier caps each model at ~20 requests/DAY. Each model has its OWN bucket, so
+# we keep a fallback CHAIN: when one model's daily cap is hit, core.llm rolls to the
+# next automatically. Combined with a model-agnostic response cache, the suite keeps
+# working across a day of demos on a free key.
 MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 MODEL_SMART = os.getenv("GEMINI_MODEL_SMART", "gemini-2.5-flash")
+MODEL_FALLBACKS = [m.strip() for m in os.getenv(
+    "GEMINI_FALLBACKS",
+    # only models actually available on this key (2.0 models 404 here); ~20/day each
+    "gemini-2.5-flash-lite,gemini-2.5-flash,gemini-2.5-pro",
+).split(",") if m.strip()]
 HAS_KEY = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
 
 # ---- data file shortcuts -------------------------------------------------
