@@ -184,7 +184,14 @@ def split_invoices(content, *, provider: str | None = None) -> list[InvoiceField
     blocks = list(content)
     blocks.append({"type": "text", "text": "List EVERY invoice in the content as a separate object."})
     batch = llm.extract(InvoiceBatch, blocks, system=_SPLIT_SYSTEM, provider=provider)
-    return batch.invoices
+    if batch.invoices:
+        return batch.invoices
+    # Robustness: a model hiccup can return an empty batch for a document that IS an
+    # invoice. Retry once as a single extraction; keep it only if it looks like an invoice
+    # (so a genuine cover note with no invoice still yields nothing). One extra call, rare.
+    single = list(content) + [{"type": "text", "text": "Extract the invoice fields."}]
+    one = llm.extract(InvoiceFields, single, system=SYSTEM, provider=provider)
+    return [one] if (one.vendor or one.total or one.invoice_number) else []
 
 
 def suggest_department(f: InvoiceFields, *, provider: str | None = None) -> SuggestedDept:

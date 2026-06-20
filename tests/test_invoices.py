@@ -201,3 +201,33 @@ def test_approve_records_an_approval_action():
     rows = inv_svc.history(tenant)
     approved = next(r for r in rows if r["id"] == inv_id)
     assert approved["status"] == "approved"
+
+
+# ---- HTTP API (FastAPI TestClient, dev auth) ----------------------------
+def test_api_post_history_and_approve_roundtrip():
+    from fastapi.testclient import TestClient
+
+    from api.main import app
+    from core.db import engine
+
+    try:
+        with TestClient(app) as client:
+            files = {"files": ("inv.txt", _ONE_INVOICE.encode(), "text/plain")}
+            r = client.post("/agents/invoices", data={"email_body": "please process"}, files=files)
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["counts"]["found"] >= 1
+
+            h = client.get("/agents/invoices/history")
+            assert h.status_code == 200
+            assert isinstance(h.json(), list)
+
+            inv_id = body["invoices"][0]["id"]
+            a = client.post("/agents/invoices/approve",
+                            data={"invoice_id": inv_id, "outcome": "approved"})
+            assert a.status_code == 200, a.text
+            assert a.json()["status"] == "approved"
+    finally:
+        # TestClient runs requests on a portal thread; release pooled SQLite connections
+        # so later direct-Session tests don't inherit a cross-thread connection.
+        engine.dispose()
