@@ -234,12 +234,18 @@ def test_concurrent_accepts_exactly_one_winner():
         results.append(shift_svc.accept(tok)["result"])
 
     threads = [threading.Thread(target=go, args=(t,)) for t in toks]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    assert results.count("confirmed") == 1
-    assert results.count("already_filled") == len(toks) - 1
+    try:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert results.count("confirmed") == 1
+        assert results.count("already_filled") == len(toks) - 1
+    finally:
+        # Drop the shared SQLite pool: cross-thread connections (check_same_thread=False)
+        # can leave a pooled handle in a bad state that would poison later tests. Disposing
+        # forces every subsequent Session to open a fresh, clean connection.
+        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +307,30 @@ def test_gap_state_reports_xlsx_sync_after_fill(tmp_path, monkeypatch):
     svc.accept(tok)
     sync = svc.gap_state(tenant, gid)["roster_sync"]
     assert sync and sync["target"] == "xlsx" and sync["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# ST4 — schedule_preview feeds the live grid
+# ---------------------------------------------------------------------------
+def test_gap_state_has_bounded_schedule_preview():
+    tenant = get_or_create_tenant("sched-preview", "Sched Preview")
+    shift_svc.seed_staff(tenant)
+    gid = shift_svc.create_gap(tenant, structured=dict(_FELIX))
+    sp = shift_svc.gap_state(tenant, gid)["schedule_preview"]
+    assert sp["gap_day"] == "Sat 06/20"
+    assert "Sat 06/20" in sp["days"]
+    assert 1 <= len(sp["rows"]) <= 40            # bounded, not all 100 staff
+    assert all("Sat 06/20" in row["grid"] for row in sp["rows"])
+
+
+def test_schedule_preview_marks_winner_after_fill():
+    tenant, gid = _seed_gap_with_outreach("sched-winner")
+    tok = _tokens(gid, 1)[0]
+    shift_svc.accept(tok)
+    sp = shift_svc.gap_state(tenant, gid)["schedule_preview"]
+    winners = [r for r in sp["rows"] if r["is_winner"]]
+    assert len(winners) == 1
+    assert winners[0]["grid"]["Sat 06/20"] == "N"   # the flipped cell shows in the preview
 
 
 def test_sse_event_bus_delivers_published_snapshot():

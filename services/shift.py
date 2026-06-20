@@ -211,6 +211,22 @@ def gap_state(tenant_id: str, gap_id: str) -> dict:
         if gap.filled_by_staff_id:
             fb = s.get(Staff, gap.filled_by_staff_id)
             filled_by = {"id": fb.id, "name": fb.name, "employee_id": fb.employee_id} if fb else None
+
+        # bounded weekly grid for the live ScheduleGrid: eligible candidates + the winner
+        winner_emp = filled_by["employee_id"] if filled_by else None
+        keep_emp = list(dict.fromkeys([*(c.employee_id for c in rep.eligible),
+                                       *([winner_emp] if winner_emp else [])]))
+        by_emp_row = {p.employee_id: p for p in staff_rows}
+        any_grid = next((dict(p.shift_grid or {}) for p in staff_rows if p.shift_grid), {})
+        preview_rows = []
+        for emp in keep_emp[:40]:
+            p = by_emp_row.get(emp)
+            if not p:
+                continue
+            preview_rows.append({"employee_id": emp, "name": p.name, "role": p.role,
+                                 "is_winner": emp == winner_emp, "grid": dict(p.shift_grid or {})})
+        schedule_preview = {"days": list(any_grid.keys()), "gap_day": gap.day_label, "rows": preview_rows}
+
         return {
             "gap": {"id": gap.id, "role": gap.role, "department": gap.department, "shift": gap.shift,
                     "day_label": gap.day_label, "required_certs": gap.required_certs,
@@ -220,6 +236,7 @@ def gap_state(tenant_id: str, gap_id: str) -> dict:
                     "filled_at": gap.filled_at.isoformat() if gap.filled_at else None},
             "filled_by": filled_by,
             "roster_sync": _last_sync.get(gap_id) if gap.status == "filled" else None,
+            "schedule_preview": schedule_preview,
             "eligible": [c.model_dump() for c in rep.eligible],
             "excluded": [e.model_dump() for e in rep.excluded],
             "counts": {"total": rep.n_total, "active": rep.n_active, "eligible": rep.n_eligible},
