@@ -1,0 +1,10 @@
+[theme]
+base = "dark"
+primaryColor = "#0a7d3f"
+
+[server]
+runOnSave = true
+fileWatcherType = "auto"
+
+[browser]
+gatherUsageStats = false
