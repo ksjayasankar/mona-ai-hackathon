@@ -37,7 +37,8 @@ with tab_check:
     if target and ui.require_key() and st.button("Validate", type="primary"):
         with st.spinner("Reading the document…"):
             r = permits.validate_permit(target)
-        badge = {"VALID": "✅", "EXPIRED": "⛔", "NOT_A_PERMIT": "🚫", "NEEDS_REVIEW": "⚠️"}.get(r.decision, "•")
+        badge = {"VALID": "✅", "EXPIRED": "⛔", "NOT_WORK_AUTHORIZED": "🛑",
+                 "NOT_A_PERMIT": "🚫", "NEEDS_REVIEW": "⚠️"}.get(r.decision, "•")
         a, b = st.columns([2, 1])
         with a:
             st.subheader(f"{badge} {r.decision.replace('_', ' ')}")

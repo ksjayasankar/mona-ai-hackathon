@@ -10,22 +10,32 @@ Two entry points:
 
 Content blocks come from core.ingest in Anthropic-style dicts; _to_parts() translates
 them to Gemini Parts, so the same call works for a photo, a PDF, or plain text.
+
+Rate limits: the Gemini free tier is ~5 requests/minute. _generate() retries on 429
+(honouring the server's retry delay) and an optional LLM_MIN_INTERVAL throttle spaces
+calls out for batch jobs — so a multi-call agent or an eval never crashes, it just waits.
 """
 from __future__ import annotations
 
 import base64
 import json
 import os
+import re
+import time
 from typing import Type, TypeVar
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 from pydantic import BaseModel
 
 from core import config
 
 _client: genai.Client | None = None
 T = TypeVar("T", bound=BaseModel)
+
+_MIN_INTERVAL = float(os.getenv("LLM_MIN_INTERVAL", "0"))  # seconds between calls; 0 = off
+_last_call = [0.0]
+_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "5"))
 
 
 def client() -> genai.Client:
@@ -70,15 +80,36 @@ def _gen_config(system: str, model: str, *, schema=None, max_tokens: int = 2000)
     return types.GenerateContentConfig(**kwargs)
 
 
+def _retry_delay(msg: str, attempt: int) -> float:
+    m = re.search(r"retry(?:Delay)?['\":\s]+([0-9.]+)s", msg) or re.search(r"retry in ([0-9.]+)s", msg)
+    base = float(m.group(1)) if m else 2 ** attempt * 8
+    return min(base + 2, 65)
+
+
+def _generate(model: str, contents, gconfig):
+    """Call Gemini with throttle + 429 retry/backoff."""
+    for attempt in range(_MAX_RETRIES + 1):
+        if _MIN_INTERVAL > 0:
+            wait = _MIN_INTERVAL - (time.monotonic() - _last_call[0])
+            if wait > 0:
+                time.sleep(wait)
+        _last_call[0] = time.monotonic()
+        try:
+            return client().models.generate_content(model=model, contents=contents, config=gconfig)
+        except errors.ClientError as e:
+            msg = str(e)
+            code = getattr(e, "code", None) or getattr(e, "status_code", None)
+            if (code == 429 or "RESOURCE_EXHAUSTED" in msg or "429" in msg) and attempt < _MAX_RETRIES:
+                time.sleep(_retry_delay(msg, attempt))
+                continue
+            raise
+
+
 def ask(prompt, system: str = "", model: str | None = None, max_tokens: int = 2000) -> str:
     """Free-form text completion. `prompt` may be a string or a list of content blocks."""
     model = model or config.MODEL
     parts = _to_parts(prompt) if isinstance(prompt, list) else [types.Part(text=prompt)]
-    resp = client().models.generate_content(
-        model=model,
-        contents=parts,
-        config=_gen_config(system or "You are a precise, concise assistant.", model, max_tokens=max_tokens),
-    )
+    resp = _generate(model, parts, _gen_config(system or "You are a precise, concise assistant.", model, max_tokens=max_tokens))
     return resp.text or ""
 
 
@@ -86,10 +117,9 @@ def extract(schema: Type[T], content, system: str = "", model: str | None = None
     """Force Gemini to return data matching `schema` (a pydantic model)."""
     model = model or config.MODEL
     parts = _to_parts(content) if isinstance(content, list) else [types.Part(text=content)]
-    resp = client().models.generate_content(
-        model=model,
-        contents=parts,
-        config=_gen_config(
+    resp = _generate(
+        model, parts,
+        _gen_config(
             system or "Extract the requested fields accurately. If a field is unknown, use null.",
             model, schema=schema, max_tokens=max_tokens,
         ),

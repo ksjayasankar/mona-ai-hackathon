@@ -89,17 +89,23 @@ def validate_permit(file: str | Path) -> PermitResult:
     if valid_until is None:
         decision, base = "NEEDS_REVIEW", 60.0
         reasons.append("Could not read a 'valid until' date.")
-    elif days is not None and days >= 0:
-        decision, base = "VALID", 90.0
-        reasons.append(f"Valid until {f.valid_until} ({days} days remaining).")
-    else:
+    elif days < 0:
         decision, base = "EXPIRED", 90.0
         reasons.append(f"Expired on {f.valid_until} ({abs(days)} days ago).")
-
-    if f.employment_allowed is False:
-        reasons.append("Remarks indicate employment is NOT permitted.")
-    elif f.employment_allowed:
-        reasons.append("Remarks permit employment.")
+    elif f.employment_allowed is False:
+        # current residence permit, but employment is prohibited -> invalid for a work placement
+        decision, base = "NOT_WORK_AUTHORIZED", 88.0
+        reasons.append(
+            f"Residence permit is current (valid until {f.valid_until}), but the remarks "
+            f"PROHIBIT employment — not valid for a work placement."
+        )
+    else:
+        decision, base = "VALID", 90.0
+        reasons.append(f"Valid until {f.valid_until} ({days} days remaining).")
+        if f.employment_allowed:
+            reasons.append("Remarks permit employment.")
+    if f.legal_basis:
+        reasons.append(f"Legal basis: {f.legal_basis}.")
     if f.notes:
         reasons.append(f.notes)
 
