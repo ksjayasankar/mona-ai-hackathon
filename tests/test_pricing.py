@@ -15,6 +15,14 @@ Coverage map (see plan-eng-review test diagram):
   T-G8  BLOCK takes precedence over clamp and margin floor
 """
 from agents.pricing_product import CatalogItem, SignalReading, decide
+from core.tools.signals import (
+    HolidayConnector,
+    SeededConnector,
+    UnconfiguredConnector,
+    WeatherConnector,
+    SEED_SUPPLY,
+    fetch_all,
+)
 
 
 def _spike(categories, *, direction="up", health_event=True):
@@ -89,3 +97,75 @@ def test_g8_block_takes_precedence_over_clamp_and_margin():
     d = decide(item, 50.0, [_spike(["cold_remedy"])])
     assert d.status == "blocked"
     assert d.final_price == 5.00
+
+
+# ----------------------------------------------------------------------------
+# Signal connectors (core/tools/signals.py) — pure parse + honest degradation.
+# No live HTTP: parse() takes fixture JSON; fetch() takes an injected getter.
+# ----------------------------------------------------------------------------
+def test_s1_weather_cold_snap_lifts_cold_remedy():
+    data = {"daily": {"temperature_2m_min": [-5.0], "temperature_2m_max": [1.0]}}
+    r = WeatherConnector(place="Homburg").parse(data, "2026-06-20T00:00:00Z")
+    assert r is not None
+    assert "cold_remedy" in r.affected_categories
+    assert r.direction == "up"
+    assert r.health_event is True
+    assert r.configured is True
+
+
+def test_s1b_weather_heatwave_lifts_sunscreen_but_not_a_health_event():
+    data = {"daily": {"temperature_2m_min": [18.0], "temperature_2m_max": [31.0]}}
+    r = WeatherConnector().parse(data, "2026-06-20T00:00:00Z")
+    assert "sunscreen" in r.affected_categories
+    assert r.direction == "up"
+    assert r.health_event is False
+
+
+def test_s1c_weather_mild_produces_no_demand_shift():
+    data = {"daily": {"temperature_2m_min": [12.0], "temperature_2m_max": [19.0]}}
+    r = WeatherConnector().parse(data, "2026-06-20T00:00:00Z")
+    assert r.direction == "flat"
+    assert r.affected_categories == []
+
+
+def test_s2_weather_http_failure_degrades_honestly():
+    def boom(url, timeout=0):
+        raise RuntimeError("network down")
+
+    r = WeatherConnector().fetch(_get=boom)
+    # Must NOT fabricate a demand signal when the upstream is down.
+    assert r is None or (r.direction == "flat" and r.affected_categories == [])
+
+
+def test_s3_unconfigured_connector_degrades_honestly():
+    r = UnconfiguredConnector("seeded:competitors", "Competitor price scrape").fetch()
+    assert r is not None
+    assert r.configured is False
+    assert r.direction == "flat"
+    assert r.affected_categories == []
+
+
+def test_s4_holiday_connector_flags_an_imminent_holiday():
+    data = [{"date": "2026-06-21", "localName": "Sommeranfang", "name": "Summer solstice"}]
+    r = HolidayConnector(country="DE").parse(data, today="2026-06-20", fetched_at="2026-06-20T00:00:00Z")
+    assert r is not None
+    assert r.configured is True
+    assert r.direction == "up"
+
+
+def test_s5_seeded_connector_returns_a_snapshot_reading():
+    r = SeededConnector(SEED_SUPPLY).fetch()
+    assert r.configured is True
+    assert r.source.startswith("seeded")
+    assert r.affected_categories  # non-empty
+
+
+def test_s6_fetch_all_survives_a_failing_connector():
+    class Boom:
+        name = "boom"
+
+        def fetch(self):
+            raise RuntimeError("kaboom")
+
+    out = fetch_all([Boom(), SeededConnector(SEED_SUPPLY)])
+    assert any(s.source.startswith("seeded") for s in out)  # the good one still came through
