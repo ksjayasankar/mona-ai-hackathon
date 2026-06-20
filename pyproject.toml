@@ -19,6 +19,8 @@ dependencies = [
     "gtts>=2.5",
     "google-genai>=2.9.0",
     "ollama>=0.6.2",
+    "sqlmodel>=0.0.38",
+    "alembic>=1.18.4",
 ]
 
 [tool.uv]
