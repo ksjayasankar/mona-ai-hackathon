@@ -81,7 +81,13 @@ class XlsxSink:
 
 
 def get_sink() -> RosterSink:
-    """GoogleSheetsSink when creds are configured, else XlsxSink."""
+    """Pick the configured sink: Apps Script webhook -> gspread service account -> xlsx."""
+    if os.getenv("GOOGLE_APPS_SCRIPT_URL"):
+        try:
+            from services.roster_sink_apps_script import AppsScriptSink  # lazy
+            return AppsScriptSink()
+        except Exception as e:                       # bad config -> fall through
+            log.warning("AppsScriptSink unavailable (%s); falling back", e)
     if os.getenv("GOOGLE_SHEETS_ID") and os.getenv("GOOGLE_SHEETS_CREDENTIALS_JSON"):
         try:
             from services.roster_sink_google import GoogleSheetsSink  # lazy: avoids gspread import by default
