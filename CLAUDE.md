@@ -4,6 +4,13 @@ Ten customer feature requests → ten agents → **one Streamlit app**. Deadline
 Goal: a *plausible prototype* of each that **checks every box in the customer's brief**.
 Principles: **KISS · YAGNI · customer-centric**. No bonus for over-solving — hit the boxes, make it demoable by a non-technical customer (no terminal/Postman), and move on.
 
+> **Productizing now → see `STATE.md` first.** The repo is moving from the Streamlit
+> prototype to a real product: FastAPI `api/` + Next.js `web/` + Supabase (multi-tenant),
+> a provider-switch LLM (`gemini`|`ollama`), `core/db` + `core/agent` (tool loop) + `core/rag`.
+> P10 Rheinmetall is wired end-to-end as the reference. Run: API
+> `uv run uvicorn api.main:app --port 8000`, web `cd web && npm run dev`, tests `uv run pytest`.
+> The Streamlit prototype below still runs and is unchanged.
+
 ## Architecture (read before writing code)
 
 One repo, one app. Three clusters, shared core.

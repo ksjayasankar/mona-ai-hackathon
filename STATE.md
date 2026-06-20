@@ -12,9 +12,11 @@ keep the other 7 as polished prototypes that migrate in over time.
 ## Where we are  ← keep this current
 - ✅ **Prototype**: 10 customer agents in one Streamlit app, all verified live on Gemini,
   demo pre-baked into a response cache. (see `CLAUDE.md`, `PITCH.md`)
-- ⬜ **Phase 0 — foundation** (SOLO, on `main`): shared `core/` (db · auth · agent-loop ·
-  rag · tools) + FastAPI `api/` + Next.js `web/` + Supabase, with **P10 wired end-to-end**
-  as the reference template. _Status: NOT STARTED._
+- ✅ **Phase 0 — foundation** (DONE): shared `core/` (provider-switch llm · db · auth ·
+  agent tool-loop · rag · tools) + FastAPI `api/` + Next.js `web/`, with **P10 Rheinmetall
+  wired end-to-end** (web → API → agent loop → SQLite, tenant-scoped + audited). Runs on
+  SQLite + dev-auth locally; Supabase-ready via env. Offline tests green; the foundation is
+  the template flagship worktrees copy.
 - ⬜ **Phase 1 — flagships** (parallel git worktrees): P2 UKS, P4 Persowerk.
 - ⬜ **Phase 2**: Theiss cluster (P7/P8/P9) → lighter (P1/P3/P5) → P6 reels.
 
@@ -75,11 +77,15 @@ around it, not against it:
 
 ## Operational facts every instance must know
 - Supabase is also org-provided (free tier is fine for this; don't assume you can raise its limits either).
-- **Run prototype:** `uv run streamlit run app/Home.py` (port 8501).
-- **Run API:** _Phase 0 fills this in._   **Run web:** _Phase 0 fills this in._
+- **Run prototype (Streamlit):** `uv run streamlit run app/Home.py` (port 8501).
+- **Run API:** `uv run uvicorn api.main:app --reload --port 8000` (set `LLM_PROVIDER=ollama` + `AUTH_MODE=dev` for free local dev).
+- **Run web:** `cd web && npm install && npm run dev` (port 3000 → talks to the API at :8000).
+- **Run tests (offline/free):** `uv run pytest` (forces ollama + a throwaway SQLite; never touches the Gemini quota).
+- **Migrations:** `uv run alembic upgrade head` (prod/Postgres). Local/SQLite auto-creates via init_db on API startup.
 - **Sample data:** `hackathon_problems_20260620/` (see `core.config.PATHS`).
-- **.env:** `GEMINI_API_KEY` today; Phase 0 adds `DATABASE_URL`, `SUPABASE_URL`,
-  `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `AUTH_MODE`.
+- **.env:** `GEMINI_API_KEY`; optional `LLM_PROVIDER` (gemini|ollama), `AUTH_MODE` (dev|supabase),
+  `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
+  `SUPABASE_JWT_SECRET`, `WEB_ORIGIN`, `FIRECRAWL_API_KEY`.
 
 ## Cross-instance coordination (worktrees)
 - **Phase 0 runs SOLO on `main`** — the foundation is shared, so no parallel work until it lands & is committed.
