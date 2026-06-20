@@ -269,6 +269,40 @@ def test_api_gap_not_found_is_404():
     assert client.get("/agents/shift/gaps/does-not-exist").status_code == 404
 
 
+# ---------------------------------------------------------------------------
+# ST2 — RosterSink wired into accept/gap_state (best-effort, never crashes)
+# ---------------------------------------------------------------------------
+def test_accept_survives_sink_error_and_reports_sync(monkeypatch):
+    import services.shift as svc
+    import services.roster_sink as rs
+
+    class BoomSink:
+        def push_roster(self, *a, **k):
+            raise RuntimeError("sheets down")
+
+        def record_fill(self, **k):
+            raise RuntimeError("sheets down")
+
+    monkeypatch.setattr(rs, "get_sink", lambda: BoomSink())
+    tenant, gid = _seed_gap_with_outreach("sink-boom")
+    tok = _tokens(gid, 1)[0]
+    assert svc.accept(tok)["result"] == "confirmed"     # a sink crash must NOT break the fill
+    state = svc.gap_state(tenant, gid)
+    assert state["gap"]["status"] == "filled"
+    assert "roster_sync" in state                       # key always present
+
+
+def test_gap_state_reports_xlsx_sync_after_fill(tmp_path, monkeypatch):
+    import services.shift as svc
+    import services.roster_sink as rs
+    monkeypatch.setattr(rs, "get_sink", lambda: rs.XlsxSink(out_path=tmp_path / "u.xlsx"))
+    tenant, gid = _seed_gap_with_outreach("sink-xlsx")
+    tok = _tokens(gid, 1)[0]
+    svc.accept(tok)
+    sync = svc.gap_state(tenant, gid)["roster_sync"]
+    assert sync and sync["target"] == "xlsx" and sync["ok"] is True
+
+
 def test_sse_event_bus_delivers_published_snapshot():
     """The SSE plumbing, tested deterministically (without holding a streaming socket open):
     a subscriber receives exactly what publish() pushes, and unsubscribe cleans up."""

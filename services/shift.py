@@ -23,8 +23,11 @@ from agents import shift as engine
 from core import config
 from core.db import engine as db_engine
 from core.models import OutreachLog, ShiftGap, Staff
+from services import roster_sink
 
 log = logging.getLogger("shift")
+
+_last_sync: dict[str, dict] = {}   # gap_id -> SyncResult-as-dict (for gap_state.roster_sync)
 
 NOW = engine.NOW                       # Sat 2026-06-20 18:30 (demo clock)
 TODAY = NOW.date()
@@ -90,6 +93,17 @@ def seed_staff(tenant_id: str, path: str | Path | None = None) -> int:
                 s.add(Staff(**fields))
             n += 1
         s.commit()
+    # push the roster to the configured sink (Google Sheet / xlsx) — best-effort
+    try:
+        push_rows = [
+            {"employee_id": str(r["Employee ID"]),
+             "name": f"{str(r.get('First Name','')).strip()} {str(r.get('Last Name','')).strip()}".strip(),
+             "role": str(r["Role"]), "department": str(r["Department"]),
+             **{c: str(grid_by_id.get(str(r["Employee ID"]), {}).get(c, "")) for c in day_cols}}
+            for _, r in roster.iterrows()]
+        roster_sink.get_sink().push_roster(push_rows, day_cols)
+    except Exception as e:                       # never block seeding on a sync failure
+        log.warning("roster push failed: %s", e)
     log.info("seeded %d staff for tenant %s", n, tenant_id)
     return n
 
@@ -205,6 +219,7 @@ def gap_state(tenant_id: str, gap_id: str) -> dict:
                     "shift_end": gap.shift_end.isoformat() if gap.shift_end else None,
                     "filled_at": gap.filled_at.isoformat() if gap.filled_at else None},
             "filled_by": filled_by,
+            "roster_sync": _last_sync.get(gap_id) if gap.status == "filled" else None,
             "eligible": [c.model_dump() for c in rep.eligible],
             "excluded": [e.model_dump() for e in rep.excluded],
             "counts": {"total": rep.n_total, "active": rep.n_active, "eligible": rep.n_eligible},
@@ -374,13 +389,25 @@ def accept(token: str) -> dict:
         s.commit()
         staff_name = staff.name if staff else None
         staff_phone = staff.phone if staff else ""
+        emp_id_val = staff.employee_id if staff else None
         gap_shift, gap_day, gap_id_val, staff_id_val = gap.shift, gap.day_label, gap.id, log_row.staff_id
     # confirmation SMS (real or simulated), outside the txn
     if staff_name:
         send_sms(staff_phone or "", f"Thanks {staff_name.split()[0]}! You're confirmed for the "
                                     f"{gap_shift} shift {gap_day}. See you then. — UKS staffing")
+    # roster round-trip (Google Sheets or xlsx) — best-effort, never breaks the fill
+    sync = {"target": "none", "ok": False, "link": None}
+    if staff_name and emp_id_val:
+        try:
+            code = "N" if gap_shift == "night" else "D"
+            res = roster_sink.get_sink().record_fill(
+                employee_id=emp_id_val, name=staff_name, day_label=gap_day, code=code, when=_now())
+            sync = {"target": res.target, "ok": res.ok, "link": res.link}
+        except Exception as e:
+            log.warning("roster sync failed: %s", e)
+    _last_sync[gap_id_val] = sync
     return {"result": "confirmed", "gap_id": gap_id_val,
-            "staff_id": staff_id_val, "staff_name": staff_name}
+            "staff_id": staff_id_val, "staff_name": staff_name, "roster_sync": sync}
 
 
 def decline(token: str) -> dict:
