@@ -109,3 +109,27 @@ def test_find_replacements_backcompat_shape():
     assert res.role == "Registered Nurse" and res.shift_window == "19:00–07:00"
     assert res.candidates and res.candidates[0].why
     assert res.candidates[0].draft_message  # top picks get an outreach draft
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — seed Staff from the hospital xlsx
+# ---------------------------------------------------------------------------
+from core.auth import get_or_create_tenant  # noqa: E402
+from services import shift as shift_svc  # noqa: E402
+
+
+def test_seed_staff_idempotent_and_parsed():
+    tenant = get_or_create_tenant("test-uks", "Test UKS")
+    n1 = shift_svc.seed_staff(tenant)
+    n2 = shift_svc.seed_staff(tenant)          # re-seed must not duplicate
+    assert n1 == n2 == 100
+    from sqlmodel import select
+    with Session(engine) as s:
+        rows = s.exec(select(Staff).where(Staff.tenant_id == tenant)).all()
+        assert len(rows) == 100
+        felix = next(r for r in rows if r.employee_id == "HOSP-1059")
+        assert felix.role == "Registered Nurse" and felix.department == "ICU"
+        assert "ACLS" in felix.qualifications
+        # an "— on shift —" person has last_shift_end set to today 19:00 (finishing a day shift)
+        on_shift = [r for r in rows if r.last_shift_end == _dt(2026, 6, 20, 19, 0)]
+        assert on_shift
