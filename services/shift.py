@@ -97,3 +97,122 @@ def staff_to_like(s: Staff, last_contacted: datetime | None = None) -> engine.St
         overtime_ok=bool(s.overtime_ok), shift_preference=s.shift_preference or "", active=bool(s.active),
         last_shift_end=s.last_shift_end, phone=s.phone or "", persona=s.persona,
         last_contacted_at=last_contacted or s.last_contacted_at)
+
+
+# --------------------------------------------------------------------------
+# CREATE GAP + SCREEN
+# --------------------------------------------------------------------------
+def _extract_emp_id(text_in: str | None) -> str | None:
+    if not text_in:
+        return None
+    m = re.search(r"HOSP-\d+", text_in, re.IGNORECASE)
+    return m.group(0).upper() if m else None
+
+
+def _tonight_label() -> str:
+    """The grid column for 'today', matching the xlsx column format, e.g. 'Sat 06/20'."""
+    return NOW.strftime("%a ") + f"{NOW.month:02d}/{NOW.day:02d}"
+
+
+def resolve_gap_spec(req: engine.GapRequest) -> engine.GapSpec:
+    role = req.role or "Registered Nurse"
+    shift = (req.shift or "night").strip().lower()
+    if shift not in SHIFT_TIMES:
+        shift = "night"
+    start_t, _ = SHIFT_TIMES[shift]
+    shift_start = datetime.combine(TODAY, start_t)
+    shift_end = shift_start + timedelta(hours=12)
+    day_label = (req.day_label or "").strip()
+    if day_label.lower() in {"", "tonight", "today", "now"}:
+        day_label = _tonight_label()
+    return engine.GapSpec(
+        role=role, department=req.department, shift=shift, shift_start=shift_start,
+        shift_end=shift_end, shift_hours=12.0, day_label=day_label,
+        required_certs=req.required_certs or [], person_out=req.person_out,
+        person_out_id=_extract_emp_id(req.person_out))
+
+
+def create_gap(tenant_id: str, *, message: str | None = None,
+               structured: dict | None = None, provider: str | None = None) -> str:
+    if structured:
+        req = engine.GapRequest(**structured)
+    elif message:
+        req = engine.parse_gap_message(message)          # core.llm (ollama offline / gemini demo)
+    else:
+        raise ValueError("create_gap needs either `message` or `structured`")
+    spec = resolve_gap_spec(req)
+    with Session(db_engine) as s:
+        gap = ShiftGap(tenant_id=tenant_id, role=spec.role, department=spec.department,
+                       shift=spec.shift, day_label=spec.day_label, required_certs=spec.required_certs,
+                       person_out=spec.person_out, shift_start=spec.shift_start,
+                       shift_end=spec.shift_end, shift_hours=spec.shift_hours, status="open", version=0)
+        s.add(gap); s.commit(); s.refresh(gap)
+        return gap.id
+
+
+def _load_gap(s: Session, tenant_id: str, gap_id: str) -> ShiftGap:
+    gap = s.get(ShiftGap, gap_id)
+    if not gap or gap.tenant_id != tenant_id:
+        raise LookupError(f"gap {gap_id} not found for tenant")
+    return gap
+
+
+def _gap_to_spec(gap: ShiftGap) -> engine.GapSpec:
+    return engine.GapSpec(
+        role=gap.role or "Registered Nurse", department=gap.department, shift=gap.shift or "night",
+        shift_start=gap.shift_start or datetime.combine(TODAY, time(19, 0)),
+        shift_end=gap.shift_end or datetime.combine(TODAY, time(19, 0)) + timedelta(hours=12),
+        shift_hours=gap.shift_hours or 12.0, day_label=gap.day_label or _tonight_label(),
+        required_certs=gap.required_certs or [], person_out=gap.person_out,
+        person_out_id=_extract_emp_id(gap.person_out))
+
+
+def screen_gap(tenant_id: str, gap_id: str) -> engine.EligibilityReport:
+    with Session(db_engine) as s:
+        gap = _load_gap(s, tenant_id, gap_id)
+        staff = s.exec(select(Staff).where(Staff.tenant_id == tenant_id)).all()
+        last_contacted = {l.staff_id: l.sent_at for l in
+                          s.exec(select(OutreachLog).where(OutreachLog.tenant_id == tenant_id)).all()
+                          if l.sent_at}
+        likes = [staff_to_like(p, last_contacted.get(p.id)) for p in staff]
+        spec = _gap_to_spec(gap)
+    return engine.screen_candidates(likes, spec)
+
+
+def gap_state(tenant_id: str, gap_id: str) -> dict:
+    rep = screen_gap(tenant_id, gap_id)
+    with Session(db_engine) as s:
+        gap = _load_gap(s, tenant_id, gap_id)
+        logs = s.exec(select(OutreachLog).where(OutreachLog.gap_id == gap_id)
+                      .order_by(OutreachLog.seq)).all()
+        staff_names = {p.id: p.name for p in s.exec(select(Staff).where(Staff.tenant_id == tenant_id)).all()}
+        filled_by = None
+        if gap.filled_by_staff_id:
+            fb = s.get(Staff, gap.filled_by_staff_id)
+            filled_by = {"id": fb.id, "name": fb.name, "employee_id": fb.employee_id} if fb else None
+        return {
+            "gap": {"id": gap.id, "role": gap.role, "department": gap.department, "shift": gap.shift,
+                    "day_label": gap.day_label, "required_certs": gap.required_certs,
+                    "person_out": gap.person_out, "status": gap.status, "version": gap.version,
+                    "shift_start": gap.shift_start.isoformat() if gap.shift_start else None,
+                    "shift_end": gap.shift_end.isoformat() if gap.shift_end else None,
+                    "filled_at": gap.filled_at.isoformat() if gap.filled_at else None},
+            "filled_by": filled_by,
+            "eligible": [c.model_dump() for c in rep.eligible],
+            "excluded": [e.model_dump() for e in rep.excluded],
+            "counts": {"total": rep.n_total, "active": rep.n_active, "eligible": rep.n_eligible},
+            "outreach": [{"id": l.id, "staff_id": l.staff_id, "staff_name": staff_names.get(l.staff_id),
+                          "seq": l.seq, "status": l.status, "channel": l.channel, "message": l.message,
+                          "sent_at": l.sent_at.isoformat() if l.sent_at else None,
+                          "responded_at": l.responded_at.isoformat() if l.responded_at else None}
+                         for l in logs],
+        }
+
+
+def list_gaps(tenant_id: str, limit: int = 20) -> list[dict]:
+    with Session(db_engine) as s:
+        rows = s.exec(select(ShiftGap).where(ShiftGap.tenant_id == tenant_id)
+                      .order_by(desc(ShiftGap.created_at)).limit(limit)).all()
+        return [{"id": g.id, "role": g.role, "department": g.department, "shift": g.shift,
+                 "day_label": g.day_label, "status": g.status,
+                 "created_at": g.created_at.isoformat()} for g in rows]

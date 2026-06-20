@@ -133,3 +133,26 @@ def test_seed_staff_idempotent_and_parsed():
         # an "— on shift —" person has last_shift_end set to today 19:00 (finishing a day shift)
         on_shift = [r for r in rows if r.last_shift_end == _dt(2026, 6, 20, 19, 0)]
         assert on_shift
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — gap creation + screening service
+# ---------------------------------------------------------------------------
+_FELIX = dict(role="Registered Nurse", department="ICU", shift="night", day_label="Sat 06/20",
+              required_certs=["BLS", "ACLS"], person_out="Felix Haddad (HOSP-1059)")
+
+
+def test_create_and_screen_felix_gap():
+    tenant = get_or_create_tenant("test-uks2", "Test UKS 2")
+    shift_svc.seed_staff(tenant)
+    gid = shift_svc.create_gap(tenant, structured=dict(_FELIX))
+    rep = shift_svc.screen_gap(tenant, gid)
+    assert rep.n_eligible >= 1
+    # every eligible is within the weekly cap (the engine guarantees it)
+    assert all(c.max_hours >= c.scheduled_hours + 12 for c in rep.eligible)
+    # Felix himself is never offered his own shift
+    assert all(c.employee_id != "HOSP-1059" for c in rep.eligible)
+    # the board exposes excluded-with-reason
+    assert rep.excluded and all(e.reason for e in rep.excluded)
+    state = shift_svc.gap_state(tenant, gid)
+    assert state["gap"]["status"] == "open" and state["eligible"]
