@@ -17,7 +17,20 @@ keep the other 7 as polished prototypes that migrate in over time.
   wired end-to-end** (web → API → agent loop → SQLite, tenant-scoped + audited). Runs on
   SQLite + dev-auth locally; Supabase-ready via env. Offline tests green; the foundation is
   the template flagship worktrees copy.
-- ⬜ **Phase 1 — flagships** (parallel git worktrees): P2 UKS, P4 Persowerk.
+- 🟡 **Phase 1 — flagships** (parallel git worktrees): P2 UKS ⬜, **P4 Persowerk ✅**.
+  - ✅ **P4 Persowerk — CV/cert fraud SIGNALS** (DONE, `feat/fraud`): deterministic forensics
+    (`core/tools/forensics.py`: PDF CreationDate-vs-ModDate, incremental-update/edit-history via
+    raw-byte `%%EOF` count, Producer/Creator editor fingerprints, image EXIF + missing-EXIF, ELA
+    labelled weak+capped) + timeline/cross-doc/cert-currency consistency + a `core.agent`
+    verify loop (`github_lookup` public REST + `web_search`) + a weighted risk score
+    (LOW/MED/HIGH + 0-100, injection forces HIGH, weak signals can never alone reach HIGH).
+    Each signal carries `{name, severity, category, evidence, why, weak}`. Persists
+    Candidate/Certificate/VerificationRecord (tenant-scoped) + AuditLog. Next.js dashboard at
+    `/persowerk` groups signals by category with their evidence span; explicitly **no
+    AI-text-detector** (unreliable + biased against non-native writers — the maturity beat).
+    Offline tests green (`uv run pytest`, 28 passed): forensics on a generated edited PDF,
+    consistency on overlapping dates, mocked `github_lookup`, tenant-scoped persistence.
+    Run: `POST /agents/fraud/assess` (multipart cv + certs + github_handle), web `/persowerk`.
 - ⬜ **Phase 2**: Theiss cluster (P7/P8/P9) → lighter (P1/P3/P5) → P6 reels.
 
 ## Locked decisions — do not re-litigate
@@ -123,6 +136,11 @@ around it, not against it:
   - **All flagship DB tables are pre-defined in `core/models/` during Phase 0** so worktrees never collide on schema.
 - Don't edit shared files (`core/db`, `core/auth`, `core/agent`, `api/main`, `CLAUDE.md`, this file)
   from a flagship worktree without flagging it here first.
+  - **Flagged (P4 `feat/fraud`):** `api/main.py` += `app.include_router(fraud.router)` (the one
+    sanctioned shared edit). `tests/conftest.py` hardened — unique per-run SQLite path +
+    WAL/journal cleanup + import-time pool dispose, to kill an intermittent
+    "readonly database" (SQLITE_READONLY_DBMOVED / stale WAL) that only appeared once a
+    second DB-writing test module existed. No behavioural change to app code.
 - Commit in logical chunks; one PR per flagship; never push straight to `main`.
 - **When you finish a phase/flagship: update "Where we are" + fill in the run commands above.**
 
