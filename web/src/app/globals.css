@@ -1,26 +1,69 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ---------------------------------------------------------------------------
+   Mona AI design tokens — an "operations console": deep navy-charcoal canvas,
+   crisp light work-surfaces, per-tenant brand color as the live accent.
+   These feed Tailwind v4 utilities (bg-ink, text-fog, font-display, ...).
+--------------------------------------------------------------------------- */
+@theme {
+  /* canvas + structure */
+  --color-ink: #0b0f1a;        /* console canvas (not pure black) */
+  --color-ink-2: #131a28;      /* raised panel on the canvas */
+  --color-ink-3: #1b2536;      /* hover / inset on the canvas */
+  --color-line: #233044;       /* hairline on dark */
+  --color-line-2: #2e3d54;     /* stronger hairline on dark */
+
+  /* light work-surfaces */
+  --color-paper: #ffffff;
+  --color-paper-2: #f4f6fa;    /* app background */
+  --color-paper-3: #eaeef5;    /* muted fill */
+  --color-edge: #dfe5ee;       /* hairline on light */
+
+  /* text */
+  --color-fg: #0b0f1a;         /* on light */
+  --color-fog: #5a6b82;        /* muted on light */
+  --color-chalk: #e7edf6;      /* on dark */
+  --color-haze: #8a9bb4;       /* muted on dark */
+
+  /* platform accent (chrome only; tenants carry their own color) */
+  --color-signal: #5b8cff;
+
+  /* status hues */
+  --color-ok: #1f9d57;
+  --color-warn: #c98a16;
+  --color-stop: #d23b4e;
+
+  /* type */
+  --font-sans: var(--font-body);
+  --font-display: var(--font-display);
+  --font-mono: var(--font-mono);
+
+  /* radii */
+  --radius-xl: 0.9rem;
+  --radius-2xl: 1.15rem;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* tighter, more deliberate display type */
+.font-display {
+  letter-spacing: -0.02em;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+::selection {
+  background: color-mix(in srgb, var(--color-signal) 28%, transparent);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
   }
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
 }

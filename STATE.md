@@ -287,3 +287,18 @@ around it, not against it:
 Design each screen in claude.ai/design → export a **handoff bundle** → implement in `web/`
 with Claude Code. Keep components modular/restylable. Use the per-customer branding in
 `core/config.py` `CUSTOMERS` as the design system so each customer page is on-brand.
+
+## Design system (in-code) — built on `main`, flagships INHERIT it
+A real design system now lives in `web/` (an "operations-console" theme: deep ink canvas, crisp
+light work-surfaces, **per-tenant brand color as the accent**). Files (all owned by `main`):
+- `web/src/app/globals.css` — Tailwind v4 token system (ink/paper palette, status hues, type scale).
+- `web/src/app/layout.tsx` — type pairing **Space Grotesk (display) · IBM Plex Sans (body) · IBM Plex Mono (data/IDs/audit)**.
+- `web/src/components/ui.tsx` — `Card`/`Button`/`Badge` keep their SAME APIs (polished) + new opt-in
+  primitives: `Section`, `Eyebrow`, `StatusDot`, `Stat`, `Mono`. (Additive, guard.py-style — nothing breaks.)
+- `web/src/lib/brand.ts` — TS mirror of `CUSTOMERS` (per-tenant color/icon/status), the single source for theming.
+- `web/src/app/page.tsx` — branded landing: all 10 agent "stations", color = tenant. `npm run build` green.
+**For flagship instances:** `git rebase master` (or merge) to inherit it, then build your page with the
+shared primitives + your tenant's brand color from `brand.ts` (light `Card` work-surfaces; `Mono` for
+IDs/confidence/evidence spans). **Set `href` in `brand.ts`** for your tenant once your page lands so the
+landing links to it. **Do NOT** edit `page.tsx`/`globals.css`/`layout.tsx`/`ui.tsx`/`brand.ts` from a
+flagship worktree (shared/owned by `main`) — flag here if you must.
