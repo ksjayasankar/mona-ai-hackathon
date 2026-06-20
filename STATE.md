@@ -57,10 +57,24 @@ app/    legacy Streamlit — transitional, retire last
 
 Full per-problem acceptance boxes + sample-data paths are in `CLAUDE.md` and `core.config`.
 
+## LLM budget — HARD CONSTRAINT (the key is given; we cannot raise it)
+The Gemini key is provided by the org — **we cannot enable billing or change quotas.**
+It allows **~20 requests/DAY per model**, and only the **2.5** models exist on it
+(`gemini-2.5-flash-lite` / `flash` / `pro`; 2.0 models 404). Fallback chain ≈ 60 calls/day
+total. Agent loops use 5–20 calls each → only a handful of live runs/day. So we design
+around it, not against it:
+- **Local dev provider.** `core/llm.py` exposes `LLM_PROVIDER=ollama|gemini`. Develop and
+  test agent loops against a **local Ollama/MLX model on the M2 (unlimited, free)**; reserve
+  the Gemini key for final-quality passes + the demo. Provider stays isolated in `core/llm.py`.
+- **Cache is load-bearing.** Every call is cached (model-agnostic, on disk). Re-runs cost 0.
+- **Tests never hit the live API** — mock or replay from cached fixtures; the suite runs offline.
+- **Frugal loops.** `core/agent.py` uses a low `max_steps`, batches reasoning, prefers a
+  single structured pass where multi-step isn't essential, and logs a **per-run call count**.
+- **Demo is pre-baked.** Run each demo flow once (cached) → replays free + instant on stage.
+- **Budget the day's ~60 Gemini calls** for final verification + pre-baking, not iteration.
+
 ## Operational facts every instance must know
-- **Gemini free key = ~20 requests/DAY per model**, and only the **2.5** models exist on it
-  (`gemini-2.5-flash-lite` / `flash` / `pro`; the 2.0 models 404). Agent loops blow this fast →
-  use a **billed key for heavy work**; otherwise lean on the `core/llm` cache. Don't thrash on 429s.
+- Supabase is also org-provided (free tier is fine for this; don't assume you can raise its limits either).
 - **Run prototype:** `uv run streamlit run app/Home.py` (port 8501).
 - **Run API:** _Phase 0 fills this in._   **Run web:** _Phase 0 fills this in._
 - **Sample data:** `hackathon_problems_20260620/` (see `core.config.PATHS`).
