@@ -74,11 +74,12 @@ _EXTRACT_SYS = (
     "Use 'general' if nothing fits. Include unit cost only if it is explicitly printed. Do not invent products."
 )
 _PROPOSE_SYS = (
-    "You are a demand-responsive pricing analyst for a health-and-wellness brand. Given products "
-    "and the external signals affecting each product's category, propose a percentage price change "
-    "for each product (positive when demand is rising, negative to move slow stock). Keep proposals "
-    "within roughly -25%..+25%. Give a one-sentence rationale naming the signal(s). Do NOT worry about "
-    "fairness or caps — a separate guardrail layer enforces those."
+    "You are a demand-responsive pricing analyst for a health-and-wellness brand. Price follows demand. "
+    "For each product: if its category's signals point UP, propose a POSITIVE delta (larger when the "
+    "signals are stronger, up to about +25%); if they point DOWN, propose a NEGATIVE delta to move stock; "
+    "if no signal touches the category, propose 0. Always RAISE the price when demand is clearly rising. "
+    "Give a one-sentence rationale naming the signal(s). Do NOT apply fairness or caps yourself — a "
+    "separate deterministic guardrail layer enforces those."
 )
 
 
@@ -108,11 +109,23 @@ def _signal_digest(signals: list[SignalReading]) -> str:
 
 
 def _propose(items: list[CatalogItem], signals: list[SignalReading], provider: str | None = None) -> Proposal:
-    product_lines = "\n".join(f"- {i.product} (category={i.category}, price EUR {i.current_price:.2f})" for i in items)
+    # Pre-compute (deterministically) which signals hit each product's category and their
+    # direction, so the LLM only has to turn "up signals" into a positive delta. This makes
+    # the proposal demand-responsive and reliable instead of leaving the matching to the model.
+    from agents.pricing_product import signals_for
+
+    lines = []
+    for i in items:
+        rel = signals_for(i, signals)
+        if rel:
+            ctx = ", ".join(f"{s.label} [{s.direction}]" for s in rel)
+            lines.append(f"- {i.product} (category={i.category}, EUR {i.current_price:.2f}) — signals on this category: {ctx}")
+        else:
+            lines.append(f"- {i.product} (category={i.category}, EUR {i.current_price:.2f}) — no signal on this category")
     prompt = (
-        f"Products:\n{product_lines}\n\nExternal signals:\n{_signal_digest(signals)}\n\n"
-        "For EACH product, propose delta_pct and a one-sentence rationale. Only move a price when a "
-        "signal touches that product's category; otherwise propose 0."
+        "Products, each annotated with the external signals on its category:\n" + "\n".join(lines) +
+        "\n\nFor EACH product propose delta_pct and a one-sentence rationale. Raise the price when its "
+        "category's signals point up, lower it when they point down, and propose 0 when there is no signal."
     )
     return llm.extract(Proposal, prompt, system=_PROPOSE_SYS, provider=provider)
 
