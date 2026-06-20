@@ -133,3 +133,71 @@ def test_suggest_department_returns_a_dept_and_reason():
     sug = invoices.suggest_department(f)
     assert sug.department.strip()
     assert sug.reason.strip()
+
+
+# ======================================================================
+# Service layer — orchestration (offline Ollama, text invoices)
+# ======================================================================
+from core.auth import get_or_create_tenant
+from core.models import InvoiceRecord
+from services import invoices as inv_svc
+
+
+def _prior(**kw) -> InvoiceRecord:
+    f = _fields(**kw)
+    return InvoiceRecord(tenant_id="t", vendor=f.vendor, invoice_number=f.invoice_number,
+                         total=f.total, date=f.date,
+                         fingerprint=invoices.fingerprint(f), dupe_key=invoices.dupe_key(f))
+
+
+# ---- pure dedupe classification (no DB, no LLM) -------------------------
+def test_exact_resend_is_classified_as_duplicate():
+    prior = [_prior()]
+    dup_of, flags = inv_svc.classify_against_prior(_fields(), prior)
+    assert dup_of == prior[0].id
+    assert any("duplicate" in f.lower() for f in flags)
+
+
+def test_amended_invoice_is_classified_as_possible_amendment_not_silent_drop():
+    prior = [_prior(total="€1,240.00")]
+    dup_of, flags = inv_svc.classify_against_prior(_fields(total="€1,420.00"), prior)
+    assert dup_of == prior[0].id
+    assert any("amend" in f.lower() for f in flags)
+
+
+def test_brand_new_invoice_is_not_a_duplicate():
+    prior = [_prior(invoice_number="R-100")]
+    dup_of, flags = inv_svc.classify_against_prior(_fields(invoice_number="R-999"), prior)
+    assert dup_of is None
+    assert flags == []
+
+
+# ---- end-to-end orchestration -------------------------------------------
+def test_process_splits_and_persists_each_invoice():
+    tenant = get_or_create_tenant("test-globus-split", "Test Globus Split")
+    report = inv_svc.process("3 invoices for March attached.", tenant_id=tenant,
+                             text_attachments=[("march_batch.txt", _TWO_INVOICES)])
+    assert report.counts["found"] >= 2
+    rows = inv_svc.history(tenant)
+    assert len(rows) >= 2
+
+
+def test_resent_duplicate_is_flagged_against_the_db():
+    tenant = get_or_create_tenant("test-globus-dupe", "Test Globus Dupe")
+    inv_svc.process("First send.", tenant_id=tenant,
+                    text_attachments=[("inv.txt", _ONE_INVOICE)])
+    again = inv_svc.process("Re-sent the same invoice.", tenant_id=tenant,
+                            text_attachments=[("inv_again.txt", _ONE_INVOICE)])
+    assert any(r.status == "duplicate" for r in again.invoices), \
+        "a re-sent identical invoice must be flagged, not silently re-ingested"
+
+
+def test_approve_records_an_approval_action():
+    tenant = get_or_create_tenant("test-globus-approve", "Test Globus Approve")
+    report = inv_svc.process("Please process.", tenant_id=tenant,
+                             text_attachments=[("inv.txt", _ONE_INVOICE)])
+    inv_id = report.invoices[0].id
+    inv_svc.approve(tenant, inv_id, approver="clerk@globus", outcome="approved", note="looks good")
+    rows = inv_svc.history(tenant)
+    approved = next(r for r in rows if r["id"] == inv_id)
+    assert approved["status"] == "approved"
