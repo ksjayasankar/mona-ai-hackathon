@@ -169,3 +169,18 @@ around it, not against it:
 Design each screen in claude.ai/design → export a **handoff bundle** → implement in `web/`
 with Claude Code. Keep components modular/restylable. Use the per-customer branding in
 `core/config.py` `CUSTOMERS` as the design system so each customer page is on-brand.
+
+## P8 Theiss pricing — BUILT (feat/pricing) · build notes + deviations
+Status: implemented end-to-end on `feat/pricing` (web → API → service → guardrails → SQLite),
+21 offline tests green. Three sanctioned deviations from the locked spec (decided via a fresh
+/plan-eng-review; all flagged here per the "flag in STATE.md if you must" rule):
+- **New file `agents/pricing_product.py`** holds the product engine (taxonomy + guardrails);
+  the Streamlit prototype `agents/pricing.py` is left untouched so `app/pages/08` keeps working.
+  This file is outside the spec's owned-files list but collides with no other worktree.
+- **Single `core.llm.extract` proposal**, not `core.agent.run_agent` — signals are pre-fetched
+  over HTTP so there are no tools to loop; one structured pass honours the 20/day Gemini budget.
+- **2 tables, not 4** — `PriceRun` + `PriceRecommendation` (signals as JSON) + reused `AuditLog`;
+  guardrail policy is a hardcoded `DEFAULT_POLICY` (no policy/snapshot tables; no UI for them).
+Shared-file edits made (both standard): +1 line in `core/models/__init__.py`, +1 router line in
+`api/main.py`. STILL TODO: a landing-page link to `/theiss-pricing` (web/src/app/page.tsx is shared
+— left for coordination), firecrawl-backed news/supply/football connectors when credits return.
