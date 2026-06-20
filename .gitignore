@@ -54,3 +54,4 @@ Icon?
 
 # ---- redundant archives (extracted folders are committed) ----
 *.zip
+.gstack/
