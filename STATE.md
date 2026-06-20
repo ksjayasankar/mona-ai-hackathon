@@ -22,6 +22,7 @@ keep the other 7 as polished prototypes that migrate in over time.
   **P8 Theiss pricing is spec-locked** (see "Flagship decision — P8") — ready to build as a 4th worktree.
   **P3 Leistenschneider permits is spec-locked** (see "Flagship decision — P3") — productize the existing 4/4 agent as a 5th worktree.
   **P10 Rheinmetall hardening is spec-locked** (see "Flagship decision — P10") — harden the shipped reference to the "unbeatable" bar as a 6th worktree.
+  **P1 Globus invoices is spec-locked** (see "Flagship decision — P1") — productize the existing invoice-triage prototype as a 7th worktree.
 
 ## Locked decisions — do not re-litigate
 - **Backend** FastAPI (`api/`). **Frontend** Next.js App Router + TypeScript + Tailwind + shadcn/ui (`web/`).
@@ -164,6 +165,39 @@ to "all present"), ✅ no DB tool in the LLM path. **Four gaps to close:**
 - **Budget guard:** dev/test on Ollama (free); LLM-judge tier cached + skipped when heuristics already quarantine; pre-bake demo.
 - **Out of scope:** process/container sandboxing of the LLM call (in-process least-privilege + manifest suffices for the claim), real ATS integration.
 
+## Flagship decision — P1 (locked via /plan-eng-review)
+**P1 Globus — invoice triage (PRODUCTIZE the existing prototype; AP automation, human-confirm)**
+EXTENDS the monorepo as a **7th parallel worktree** (`hk-invoices` / `feat/invoices`), disjoint from the
+others. **REUSES the prototype agent `agents/invoices.py` (`triage_invoice` + `route` + the category→dept
+table) as the core — extend, NEVER rewrite.** Owns: `agents/invoices.py` (extend), `core/models/invoice.py`
+(+1 import line in `core/models/__init__.py`), `services/invoices.py`, `api/routes/invoices.py` (+ the one
+shared router line in `api/main.py`), `web/src/app/globus/**`, `web/src/lib/api/invoices.ts`,
+`tests/test_invoices.py`. Streamlit `app/pages/01_*` stays untouched.
+- **Strong base already:** native read of ANY format (PDF/PNG/DOCX, DE/EN, messy scans — stain/faded/
+  angled) with **NO OCR** (Claude vision) → InvoiceFields → deterministic category→department routing →
+  confidence. Ground truth `00_manifest.csv` grades vendor/total/vat_rate/currency (NO department label →
+  routing is demonstrated; samples are single invoices → the 3-in-1 wow beat is a synthetic demo case).
+- **Email ingest = simulated inbox** (upload/paste email + attachments, the P10 pattern); a pluggable
+  IMAP/Gmail connector interface is defined but NOT wired. Demoable by a non-technical customer, no creds.
+- **Multi-invoice splitting (wow beat):** the model segments an email/document into N invoices, each
+  carrying its own fields + a page/evidence span; deterministic code then routes + dedupes each
+  independently. Handles multiple invoices in one PDF AND across attachments.
+- **Duplicate detection:** deterministic fingerprint = normalized (vendor + invoice_number + total + date),
+  checked against the tenant's prior invoices in the DB; a near-match (same vendor+number, different total)
+  → "possible duplicate / amended" for a human.
+- **Grounded extraction + per-field confidence:** model returns the verbatim printed text per field + a
+  per-field confidence; ungrounded/low-confidence fields flagged; below threshold → human review before
+  approval. Extend fields (line items, PO, due date, net/VAT split). Native vision handles messy scans.
+- **Routing + approval:** keep the deterministic category→dept table (rules-first); LLM SUGGESTS a
+  department with reasoning when the table falls through to Finance Review. Route → approval step →
+  persist InvoiceRecord + AuditLog. The "flag for human confirm" box is satisfied.
+- **Wow beat:** a messy email with three invoices → split, extract, route, dedupe each in seconds, each with
+  grounded fields + confidence + suggested department + "send to approver."
+- **Acceptance (CLAUDE.md P1):** read invoice (pdf/png/docx) ✅ · extract vendor/total/category ✅ · route to dept ✅ · flag for human confirm ✅.
+- **Budget guard:** dev/test on Ollama (free); single structured extraction pass per invoice; cache every
+  Gemini call; eval against the 10-invoice manifest (vendor/total/vat/currency); pre-bake the demo.
+- **Out of scope:** real Gmail/IMAP OAuth, real ERP/SAP posting, payment execution.
+
 ## Target architecture (monorepo)
 ```
 core/   db · models/ · auth · agent (tool-loop) · rag · tools/ · llm · guard · ingest · config
@@ -230,6 +264,12 @@ around it, not against it:
   - P10 Rheinmetall hardening → `services/secure_intake.py`, `api/routes/secure_intake.py`,
     `core/tools/docs.py`, `web/src/app/rheinmetall/**`, `tests/test_secure_intake.py` + an ADDITIVE,
     backward-compatible hardening of shared `core/guard.py` (see coordination note below)
+  - P1 Globus invoices → `agents/invoices.py` (EXTEND existing), `api/routes/invoices.py`,
+    `core/models/invoice.py`, `services/invoices.py`, `web/src/app/globus/**`, `web/src/lib/api/invoices.ts`
+    — Streamlit `app/pages/01_*` stays untouched
+  - **NOTE — prototype agents already exist for ALL 10 problems** (`agents/*.py`). Productizing
+    P8/P7/P9 etc. = EXTEND the existing `agents/pricing.py` / `agents/analytics.py` / `agents/gaps.py`
+    prototype (pure logic, reuse it), do NOT create a new agent module from scratch.
   - **P2/P4 DB tables are pre-defined in `core/models/` (Phase 0).** P8 adds a NEW `core/models/pricing.py`
     plus a single **append-only** import line in `core/models/__init__.py` — safe because P2/P4's lines
     are already committed, so there's nothing to collide on. Its only other shared touch is the
