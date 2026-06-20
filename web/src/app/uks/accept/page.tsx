@@ -2,14 +2,41 @@
 
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Badge, Button, Card } from "@/components/ui";
 import { acceptToken } from "../api";
+import { StatusPill } from "../components/StatusPill";
 
 interface AcceptResult {
   result: "confirmed" | "already_filled" | "invalid" | "declined";
   staff_name?: string | null;
   filled_by?: string | null;
   detail?: string;
+}
+
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <main className="grid min-h-screen place-items-center bg-slate-50 px-6 py-16 text-slate-900">
+      <div className="w-full max-w-md">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="grid h-10 w-10 place-items-center rounded-xl bg-[#b3122b] text-lg text-white">🏥</div>
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">UKS · Staffing</div>
+            <h1 className="text-lg font-bold leading-tight">Shift offer</h1>
+          </div>
+        </div>
+        {children}
+      </div>
+    </main>
+  );
+}
+
+function Card({ children, tone = "white" }: { children: React.ReactNode; tone?: "white" | "green" | "amber" | "red" }) {
+  const tones = {
+    white: "border-slate-200 bg-white",
+    green: "border-emerald-200 bg-emerald-50",
+    amber: "border-amber-200 bg-amber-50",
+    red: "border-rose-200 bg-rose-50",
+  };
+  return <div className={`rounded-2xl border p-6 shadow-sm ${tones[tone]}`}>{children}</div>;
 }
 
 function AcceptInner() {
@@ -30,31 +57,35 @@ function AcceptInner() {
     }
   }
 
+  if (!token) {
+    return (
+      <Shell>
+        <Card tone="red">This link is missing its token.</Card>
+      </Shell>
+    );
+  }
+
   return (
-    <main className="mx-auto max-w-lg px-6 py-16 text-slate-900">
-      <div className="mb-6 border-l-4 pl-4" style={{ borderColor: "#b3122b" }}>
-        <p className="text-xs font-semibold tracking-widest text-slate-500">UKS · STAFFING</p>
-        <h1 className="text-2xl font-bold">🏥 Shift offer</h1>
-      </div>
-
-      {!token && <Card className="p-6 text-sm text-red-700">This link is missing its token.</Card>}
-
-      {token && !res && (
-        <Card className="p-6">
-          <p className="mb-4 text-slate-700">
-            You&apos;ve been asked to cover an urgent shift. Tap below to accept it — the first qualified colleague to
-            accept gets the shift.
+    <Shell>
+      {!res && (
+        <Card>
+          <p className="mb-5 text-slate-700">
+            You&apos;ve been asked to cover an urgent shift. The first qualified colleague to accept gets it.
           </p>
-          <Button onClick={confirm} disabled={busy}>
+          <button
+            onClick={confirm}
+            disabled={busy}
+            className="w-full rounded-lg bg-[#b3122b] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#8f0e22] disabled:opacity-50"
+          >
             {busy ? "Confirming…" : "✅ Accept this shift"}
-          </Button>
-          {err && <p className="mt-3 text-sm text-red-700">⚠️ {err}</p>}
+          </button>
+          {err && <p className="mt-3 text-sm text-rose-700">⚠️ {err}</p>}
         </Card>
       )}
 
       {res?.result === "confirmed" && (
-        <Card className="border-green-300 bg-green-50 p-6">
-          <Badge tone="green">Confirmed</Badge>
+        <Card tone="green">
+          <StatusPill status="accepted" label="confirmed" />
           <p className="mt-3 text-slate-800">
             Thank you{res.staff_name ? `, ${res.staff_name.split(" ")[0]}` : ""}! You&apos;re confirmed for the shift.
             The roster has been updated and the coordinator notified.
@@ -63,28 +94,27 @@ function AcceptInner() {
       )}
 
       {res?.result === "already_filled" && (
-        <Card className="border-amber-300 bg-amber-50 p-6">
-          <Badge tone="amber">Already filled</Badge>
+        <Card tone="amber">
+          <StatusPill status="closed" label="already filled" />
           <p className="mt-3 text-slate-800">
-            This shift was just filled{res.filled_by ? ` by ${res.filled_by}` : ""} — thank you anyway. No action
-            needed.
+            This shift was just filled{res.filled_by ? ` by ${res.filled_by}` : ""} — thank you anyway. No action needed.
           </p>
         </Card>
       )}
 
       {res?.result === "invalid" && (
-        <Card className="border-red-300 bg-red-50 p-6">
-          <Badge tone="red">Invalid link</Badge>
+        <Card tone="red">
+          <StatusPill status="declined" label="invalid" />
           <p className="mt-3 text-slate-800">This link is no longer valid{res.detail ? ` (${res.detail})` : ""}.</p>
         </Card>
       )}
-    </main>
+    </Shell>
   );
 }
 
 export default function AcceptPage() {
   return (
-    <Suspense fallback={<main className="mx-auto max-w-lg px-6 py-16 text-slate-500">Loading…</main>}>
+    <Suspense fallback={<main className="grid min-h-screen place-items-center text-slate-500">Loading…</main>}>
       <AcceptInner />
     </Suspense>
   );
