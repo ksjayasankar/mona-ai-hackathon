@@ -24,6 +24,8 @@ def test_routing_maps_categories_to_departments():
     assert invoices.route("Hotel stay") == "Travel & Expenses"
     assert invoices.route("Office supplies") == "Procurement"
     assert invoices.route("Professional services / consulting") == "Finance Approval"
+    assert invoices.route("Spedition / Fracht (freight)") == "Operations"
+    assert invoices.route("Logistics / shipping") == "Operations"
 
 
 def test_routing_unknown_category_falls_through_to_finance_review():

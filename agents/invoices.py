@@ -34,6 +34,10 @@ SYSTEM = (
 # category keyword -> department. First match wins; everything else -> Finance Review.
 _ROUTING: list[tuple[tuple[str, ...], str]] = [
     (("energy", "gas", "electricity", "strom", "utilit", "power", "water"), "Facilities"),
+    # Operations is checked before IT on purpose: the IT rule's bare "it" keyword is a
+    # substring of "sped-it-ion", so freight must win first (first match wins).
+    (("freight", "logistics", "shipping", "spedition", "fracht", "transport", "courier",
+      "delivery", "haulage"), "Operations"),
     (("software", "cloud", "saas", "subscription", "hardware", "it", "license", "licence",
       "internet", "telephone", "telekom"), "IT"),
     (("hotel", "travel", "flight", "train", "lodging", "accommodation"), "Travel & Expenses"),
