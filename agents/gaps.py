@@ -135,24 +135,28 @@ def _enrich_text(extra: list[str] | None) -> str:
     )
 
 
-def read_product_set(file: str | Path) -> ProductSet:
-    """Pass A: extract Allgäuer's own product set from the data pack."""
-    blocks = ingest.file_to_blocks(file)
-    blocks.append({"type": "text", "text": (
+def read_product_set(file: str | Path, blocks: list[dict] | None = None) -> ProductSet:
+    """Pass A: extract Allgäuer's own product set from the data pack.
+
+    `blocks` lets a caller ingest the PDF once and reuse the content blocks across passes
+    (avoids paying the vision/ingest cost twice).
+    """
+    blocks = list(blocks) if blocks is not None else ingest.file_to_blocks(file)
+    blocks = blocks + [{"type": "text", "text": (
         "Extract ONLY Allgäuer Latschenkiefer's own products from sections 2 and 3 "
         "(the catalogue and the structured product dataset). Map each to a customer need "
         "and a format. List the distinct needs and formats covered."
-    )})
-    return llm.extract(ProductSet, blocks, system=SYSTEM_PRODUCTS, model=None, max_tokens=3000)
+    )}]
+    return llm.extract(ProductSet, blocks, system=SYSTEM_PRODUCTS, max_tokens=3000)
 
 
-def read_competitors(file: str | Path) -> CompetitorLandscape:
+def read_competitors(file: str | Path, blocks: list[dict] | None = None) -> CompetitorLandscape:
     """Pass B: extract the competitor landscape from the data pack."""
-    blocks = ingest.file_to_blocks(file)
-    blocks.append({"type": "text", "text": (
+    blocks = list(blocks) if blocks is not None else ingest.file_to_blocks(file)
+    blocks = blocks + [{"type": "text", "text": (
         "Extract the full competitor landscape from section 4 ('Competitor landscape'). "
         "Record name, owner/group, overlaps_in, and positioning for every row in the table."
-    )})
+    )}]
     return llm.extract(CompetitorLandscape, blocks, system=SYSTEM_COMPETITORS, max_tokens=2000)
 
 
@@ -162,8 +166,11 @@ def run_gap_analysis(file: str | Path, extra_signals: list[str] | None = None) -
     `extra_signals` is an optional list of live web findings (e.g. from firecrawl) folded
     in as indicative data; the agent works pack-only when it is empty.
     """
-    products = read_product_set(file)
-    landscape = read_competitors(file)
+    # Ingest the data pack ONCE (a vision PDF auto-routes to Gemini, which is daily-capped),
+    # then reuse the blocks for both extraction passes.
+    blocks = ingest.file_to_blocks(file)
+    products = read_product_set(file, blocks=blocks)
+    landscape = read_competitors(file, blocks=blocks)
 
     prompt = (
         "ALLGÄUER PRODUCT SET (the brand's own products):\n"
@@ -179,7 +186,7 @@ def run_gap_analysis(file: str | Path, extra_signals: list[str] | None = None) -
         "Return 6-10 of the strongest gaps, highest priority first."
         + _enrich_text(extra_signals)
     )
-    analysis = llm.extract(GapAnalysis, prompt, system=SYSTEM_GAPS, model=None, max_tokens=4000)
+    analysis = llm.extract(GapAnalysis, prompt, system=SYSTEM_GAPS, max_tokens=4000)
     # Keep the deliverable sorted so the page can render a ranked list directly.
     analysis.white_space.sort(key=lambda g: g.priority, reverse=True)
     return GapResult(product_set=products, landscape=landscape, analysis=analysis)

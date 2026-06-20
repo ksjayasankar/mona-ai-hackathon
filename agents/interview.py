@@ -119,6 +119,30 @@ def build_kit(role_text: str) -> InterviewKit:
     return llm.extract(InterviewKit, prompt, system=KIT_SYSTEM)
 
 
+def role_to_text(role: Role) -> str:
+    """Flatten a Role into the free-text `build_kit` expects."""
+    parts = [role.title]
+    if role.seniority:
+        parts.append(f"Seniority: {role.seniority}")
+    if role.summary:
+        parts.append(role.summary)
+    return "\n".join(parts)
+
+
+def kit_from_file(file: str | Path) -> tuple[RoleList, InterviewKit]:
+    """One-shot pipeline for a single upload/click.
+
+    Reads a job-offer document, picks the primary (first) open role it finds, and
+    builds the interview kit for it. Exactly two LLM calls (list roles + build kit).
+    Returns both the full role list (so the UI can show what was found) and the kit.
+    """
+    roles = list_roles(file)
+    primary = roles.roles[0] if roles.roles else None
+    role_text = role_to_text(primary) if primary else "Unspecified role from an uploaded job offer."
+    kit = build_kit(role_text)
+    return roles, kit
+
+
 def group_by_competency(kit: InterviewKit) -> dict[str, list[InterviewQuestion]]:
     """Group a kit's questions by competency, in a stable display order."""
     groups: dict[str, list[InterviewQuestion]] = {}

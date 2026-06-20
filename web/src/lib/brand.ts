@@ -49,17 +49,17 @@ export const TENANTS: Tenant[] = [
   },
   {
     key: "kohlpharma", n: 5, company: "Kohlpharma", city: "Merzig", dept: "Hiring Manager",
-    color: "#0e7490", icon: "💬", agent: "Interview Copilot", status: "prototype",
+    color: "#0e7490", icon: "💬", agent: "Interview Copilot", status: "live", href: "/kohlpharma",
     promise: "Turns a job offer into role-relevant interview questions and a red-flag checklist.",
   },
   {
     key: "theiss_reels", n: 6, company: "Dr. Theiss Naturwaren", city: "Homburg", dept: "Marketing",
-    color: "#15803d", icon: "🎬", agent: "Reel Studio Agent", status: "prototype",
+    color: "#15803d", icon: "🎬", agent: "Reel Studio Agent", status: "live", href: "/theiss-reels",
     promise: "Generates a vertical reel with script, captions and voiceover — text kept inside platform safe zones.",
   },
   {
     key: "theiss_analytics", n: 7, company: "Dr. Theiss Naturwaren", city: "Homburg", dept: "Marketing",
-    color: "#15803d", icon: "📊", agent: "Targeting Analytics Agent", status: "prototype",
+    color: "#15803d", icon: "📊", agent: "Targeting Analytics Agent", status: "live", href: "/theiss-analytics",
     promise: "Segments customer data, recommends the best date/time to market, then measures the lift.",
   },
   {
@@ -69,7 +69,7 @@ export const TENANTS: Tenant[] = [
   },
   {
     key: "theiss_gaps", n: 9, company: "Dr. Theiss Naturwaren", city: "Homburg", dept: "Marketing / Strategy",
-    color: "#15803d", icon: "🧭", agent: "Competitive Gap Agent", status: "prototype",
+    color: "#15803d", icon: "🧭", agent: "Competitive Gap Agent", status: "live", href: "/theiss-gaps",
     promise: "Benchmarks the product set against competitors and surfaces concrete white-space gaps to capture.",
   },
   {

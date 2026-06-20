@@ -13,7 +13,9 @@ from fastapi.responses import JSONResponse
 
 from core.auth import Principal, current_principal
 from core.db import DATABASE_URL, init_db
-from api.routes import fraud, permits, pricing, secure_intake, shift
+from api.routes import (
+    analytics, fraud, gaps, interview, permits, pricing, reels, secure_intake, shift,
+)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("api")
@@ -60,3 +62,7 @@ app.include_router(shift.router)
 app.include_router(fraud.router)
 app.include_router(permits.router)
 app.include_router(pricing.router)
+app.include_router(interview.router)
+app.include_router(reels.router)
+app.include_router(analytics.router)
+app.include_router(gaps.router)

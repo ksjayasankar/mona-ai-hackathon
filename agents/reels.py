@@ -16,9 +16,10 @@ If ffmpeg muxing fails we fall back to the storyboard frames + script + audio so
 """
 from __future__ import annotations
 
+import base64
 import shutil
 import subprocess
-import textwrap
+import tempfile
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -220,7 +221,7 @@ def write_script(file: str | Path | None = None) -> ReelScript:
             "scene captions and a CTA. Keep every line very short for the safe zone."
         ),
     })
-    return llm.extract(ReelScript, blocks, system=SYSTEM, model=config.MODEL)
+    return llm.extract(ReelScript, blocks, system=SYSTEM)
 
 
 def _make_voiceover(script: ReelScript, out_dir: Path) -> tuple[str | None, str]:
@@ -236,7 +237,8 @@ def _make_voiceover(script: ReelScript, out_dir: Path) -> tuple[str | None, str]
         return None, spoken
 
 
-def _mux_video(clean_frames: list[Path], audio: str | None, out_dir: Path) -> str | None:
+def _mux_video(clean_frames: list[Path], audio: str | None, out_dir: Path,
+               timeout: float = 120.0) -> str | None:
     """Assemble frames (SCENE_SECS each) + audio into a vertical MP4 via ffmpeg."""
     if not shutil.which("ffmpeg") or not clean_frames:
         return None
@@ -265,7 +267,7 @@ def _mux_video(clean_frames: list[Path], audio: str | None, out_dir: Path) -> st
         cmd += ["-c:a", "aac", "-b:a", "128k"]
     cmd += [str(out_mp4)]
     try:
-        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+        subprocess.run(cmd, check=True, capture_output=True, timeout=timeout)
         return str(out_mp4) if out_mp4.exists() else None
     except Exception:
         return None
@@ -347,4 +349,143 @@ def make_reel(file: str | Path | None = None, script: ReelScript | None = None) 
         },
         reasons=reasons,
         voiceover_text=spoken,
+    )
+
+
+# ---- web-friendly, stateless storyboard (base64 data URLs, no static files) ---
+class StoryboardFrame(BaseModel):
+    """One vertical frame, ready to drop into an <img> tag on the web."""
+
+    kicker: str                       # HOOK / SCENE n / CTA
+    caption: str                      # the actual on-frame text
+    sub: str                          # secondary line (CTA hashtags, etc.)
+    data_url: str                     # data:image/png;base64,… (safe-zone guides drawn ON)
+
+
+class Storyboard(BaseModel):
+    """Everything the localhost web page needs — no filesystem dependency."""
+
+    product_name: str
+    script: ReelScript
+    captions: list[str]               # the spoken caption track, in order
+    frames: list[StoryboardFrame]     # vertical frames WITH visible safe-zone overlay
+    video_data_url: str | None        # data:video/mp4;base64,… if a quick mux succeeded
+    safe_zone: dict
+    safe_zone_note: str               # plain-language "safe zones respected" confirmation
+    confidence: float
+    reasons: list[str]
+    voiceover_text: str
+
+
+def _png_data_url(path: Path) -> str:
+    b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{b64}"
+
+
+def build_storyboard(
+    file: str | Path | None = None,
+    script: ReelScript | None = None,
+    *,
+    try_video: bool = True,
+    video_timeout: float = 25.0,
+) -> Storyboard:
+    """Stateless storyboard-first pipeline for the web.
+
+    1. write_script (text → fast, Ollama-friendly)
+    2. render the safe-zone frames with PIL (fast) and base64-encode them
+    3. OPTIONALLY attempt a quick gTTS + ffmpeg mux, hard-timeboxed; on any failure or
+       missing binary we fall back to the storyboard gracefully and say so.
+
+    Frames are rendered to a throwaway temp dir, encoded, then the dir is removed — no
+    static-file serving and no DB.
+    """
+    if script is None:
+        script = write_script(file)
+
+    # storyboard order: hook → scenes → cta
+    cap_specs = [
+        ("HOOK", script.hook, ""),
+        *[(f"SCENE {i + 1}", s, "") for i, s in enumerate(script.scenes)],
+        ("CTA", script.cta, "  ".join(f"#{h.lstrip('#')}" for h in script.hashtags[:3])),
+    ]
+    total = len(cap_specs)
+
+    frames: list[StoryboardFrame] = []
+    video_data_url: str | None = None
+    audio_ok = False
+
+    with tempfile.TemporaryDirectory(prefix="reel_") as tmp:
+        tmp_dir = Path(tmp)
+        clean_paths: list[Path] = []
+        for i, (kicker, head, sub) in enumerate(cap_specs):
+            guided = _render_frame(
+                tmp_dir / f"frame_g_{i:02d}.png", kicker=kicker, headline=head, sub=sub,
+                product=script.product_name, idx=i, total=total, guides=True,
+            )
+            clean = _render_frame(
+                tmp_dir / f"frame_{i:02d}.png", kicker=kicker, headline=head, sub=sub,
+                product=script.product_name, idx=i, total=total, guides=False,
+            )
+            clean_paths.append(clean)
+            frames.append(StoryboardFrame(
+                kicker=kicker, caption=head, sub=sub, data_url=_png_data_url(guided),
+            ))
+
+        # OPTIONAL, hard-timeboxed full video. We never let it block the storyboard.
+        if try_video and shutil.which("ffmpeg"):
+            try:
+                audio_path, _ = _make_voiceover(script, tmp_dir)
+                audio_ok = bool(audio_path)
+                mp4 = _mux_video(clean_paths, audio_path, tmp_dir, timeout=video_timeout)
+                if mp4 and Path(mp4).exists():
+                    b64 = base64.b64encode(Path(mp4).read_bytes()).decode("ascii")
+                    video_data_url = f"data:video/mp4;base64,{b64}"
+            except Exception:
+                video_data_url = None
+
+    captions = [script.hook, *script.scenes, script.cta]
+    safe_zone = {
+        "canvas": f"{W}x{H}",
+        "top_reserved_px": SAFE_TOP,
+        "bottom_reserved_px": SAFE_BOTTOM,
+        "right_reserved_px": SAFE_RIGHT,
+        "safe_box": list(SAFE_BOX),
+    }
+    safe_zone_note = (
+        f"Safe zones respected: vertical {W}×{H} canvas with the top {SAFE_TOP}px, "
+        f"bottom {SAFE_BOTTOM}px and right {SAFE_RIGHT}px reserved for the TikTok / "
+        f"Instagram UI. Every caption is laid out strictly inside the dashed safe box."
+    )
+
+    reasons = [
+        f"Vertical {W}×{H} canvas — native TikTok / Instagram Reels format.",
+        f"All text kept inside the safe zone: top {SAFE_TOP}px, bottom {SAFE_BOTTOM}px and "
+        f"right {SAFE_RIGHT}px reserved for platform UI (dashed overlay makes this visible).",
+        f"Script grounded in the Allgäuer Latschenkiefer data pack — featured product: "
+        f"{script.product_name}.",
+        f"{total} scenes ≈ {total * SCENE_SECS:g}s reel.",
+    ]
+    confidence = 90.0
+    if video_data_url:
+        reasons.append("Full vertical MP4 rendered (gTTS voiceover + ffmpeg mux).")
+    else:
+        confidence -= 20
+        reasons.append(
+            "Video render skipped or unavailable — storyboard frames + script delivered "
+            "(safe-zone boxes are still fully demonstrated)."
+        )
+    if not audio_ok and try_video:
+        confidence -= 5
+
+    return Storyboard(
+        product_name=script.product_name,
+        script=script,
+        captions=captions,
+        frames=frames,
+        video_data_url=video_data_url,
+        safe_zone=safe_zone,
+        safe_zone_note=safe_zone_note,
+        confidence=round(confidence, 1),
+        reasons=reasons,
+        voiceover_text=". ".join(captions),
     )
