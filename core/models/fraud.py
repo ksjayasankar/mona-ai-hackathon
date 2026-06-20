@@ -15,6 +15,7 @@ class Candidate(SQLModel, table=True):
     tenant_id: str = Field(foreign_key="tenant.id", index=True)
     name: str | None = None
     email: str | None = None
+    github: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
 
 

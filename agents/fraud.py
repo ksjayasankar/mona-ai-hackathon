@@ -21,12 +21,14 @@ against a CV that tries to instruct the checker ("ignore previous instructions�
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from core import guard, ingest, llm
+from core.tools.forensics import Signal
 
 TODAY = date(2026, 6, 20)  # hackathon "today"; keep deterministic for the demo
 
@@ -73,6 +75,19 @@ class CVClaims(BaseModel):
     skills: list[str] = Field(description="Skills / technologies the candidate claims")
     summary: str | None = Field(description="The CV's profile/summary paragraph, verbatim")
     languages: list[str] = Field(default_factory=list, description="Spoken languages claimed")
+    email: str | None = Field(default=None, description="Candidate email if present")
+    github: str | None = Field(default=None, description="GitHub URL or handle if present on the CV")
+    writing_sample: str | None = Field(
+        default=None,
+        description="Verbatim representative prose from the CV (the summary plus 2-3 of the most "
+        "descriptive sentences), used to assess writing style. Copy exactly, do not paraphrase.")
+    ai_writing_likelihood: int | None = Field(
+        default=None, ge=0, le=100,
+        description="CALIBRATED estimate (0-100) that the prose was AI-generated. Be FAIR: polished "
+        "or non-native English is NOT evidence of AI. Only raise it for uniform, generic, "
+        "specifics-free phrasing. Leave null if unsure.")
+    ai_writing_reasons: list[str] = Field(
+        default_factory=list, description="Concrete cues behind ai_writing_likelihood. Empty if none.")
     extraction_confidence: float = Field(
         description="0-100, how legible/complete the CV was", ge=0, le=100
     )
@@ -307,3 +322,302 @@ def check_certificate(file: str | Path) -> CertResult:
         fields=f,
         reasons=reasons,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Deterministic signal engines (no LLM) — the testable substance of P4.
+# These power the productized service; the legacy analyze_cv/check_certificate
+# above stay for the Streamlit prototype.
+# --------------------------------------------------------------------------- #
+_PRESENT = {"present", "current", "now", "heute", "ongoing", "till date", "to date"}
+
+
+def _parse_month(s: str | None, *, today: date) -> tuple[date | None, bool]:
+    """Parse a CV date as written. Returns (date, is_present_keyword)."""
+    if not s:
+        return None, False
+    t = s.strip().lower()
+    if any(p in t for p in _PRESENT):
+        return today, True
+    for fmt in ("%m/%Y", "%Y-%m", "%m.%Y", "%Y"):
+        try:
+            return datetime.strptime(s.strip(), fmt).date().replace(day=1), False
+        except ValueError:
+            continue
+    m = re.search(r"(19|20)\d{2}", t)
+    if m:
+        return date(int(m.group(0)), 1, 1), False
+    return None, False
+
+
+def _fmt(role: CVRole) -> str:
+    return f"'{role.title or role.employer or '?'}' ({role.start or '?'}–{role.end or '?'})"
+
+
+def consistency_signals(claims: CVClaims, *, today: date = TODAY) -> list[Signal]:
+    """Timeline analysis: overlaps, large gaps, impossible/future dates. All deterministic."""
+    out: list[Signal] = []
+    parsed = []
+    for r in claims.roles:
+        s, _ = _parse_month(r.start, today=today)
+        e, is_present = _parse_month(r.end, today=today)
+        parsed.append((r, s, e, is_present))
+        if s and e and e < s:
+            out.append(Signal(name="impossible_dates", severity="medium", category="consistency",
+                              evidence=f"Role {_fmt(r)} ends before it starts.",
+                              why="An end date earlier than the start is internally impossible — likely a typo or fabrication."))
+        for label, dt in (("start", s), ("end", None if is_present else e)):
+            if dt and dt > today:
+                out.append(Signal(name="future_dated", severity="medium", category="consistency",
+                                  evidence=f"Role {_fmt(r)} has a {label} date in the future ({dt.year}).",
+                                  why="A date after today cannot describe past employment."))
+
+    # overlaps (>1 month) between any two datable roles
+    datable = [(r, s, e) for (r, s, e, _p) in parsed if s and e]
+    for i in range(len(datable)):
+        for j in range(i + 1, len(datable)):
+            (ra, sa, ea), (rb, sb, eb) = datable[i], datable[j]
+            overlap_days = (min(ea, eb) - max(sa, sb)).days
+            if overlap_days > 31:
+                out.append(Signal(name="timeline_overlap", severity="medium", category="consistency",
+                                  evidence=f"{_fmt(ra)} overlaps {_fmt(rb)} by ~{overlap_days // 30} month(s).",
+                                  why="Concurrent full-time roles can be legitimate (freelance/part-time) but often "
+                                      "indicate padding — confirm with the candidate."))
+
+    # gaps > 12 months between consecutive (sorted by start) roles
+    seq = sorted([(r, s, e) for (r, s, e, _p) in parsed if s and e], key=lambda x: x[1])
+    for (ra, _sa, ea), (rb, sb, _eb) in zip(seq, seq[1:]):
+        gap_days = (sb - ea).days
+        if gap_days > 365:
+            out.append(Signal(name="timeline_gap", severity="low", category="consistency",
+                              evidence=f"~{gap_days // 30}-month gap between {_fmt(ra)} and {_fmt(rb)}.",
+                              why="Unexplained gaps are common and rarely fraud, but worth a question in interview."))
+    return out
+
+
+def _norm_name(n: str | None) -> set[str]:
+    return {t for t in re.split(r"\s+", (n or "").lower().strip()) if len(t) > 1}
+
+
+def cross_signals(claims: CVClaims, certs: list[CertFields]) -> list[Signal]:
+    """Cross-document: does the CV name match the certificate holder?"""
+    out: list[Signal] = []
+    cv_tokens = _norm_name(claims.candidate_name)
+    if not cv_tokens:
+        return out
+    for c in certs:
+        h_tokens = _norm_name(c.holder_name)
+        if h_tokens and not (cv_tokens & h_tokens):
+            out.append(Signal(name="name_mismatch", severity="medium", category="consistency",
+                              evidence=f"CV name '{claims.candidate_name}' does not match certificate holder "
+                                       f"'{c.holder_name}' on {c.cert_type or 'a certificate'}.",
+                              why="A certificate issued to a different person may be borrowed or fabricated — verify identity."))
+    return out
+
+
+def cert_signals(cert: CertFields, *, today: date = TODAY) -> list[Signal]:
+    """Certificate forgery + currency signals (deterministic over the extracted fields)."""
+    out: list[Signal] = []
+    if not cert.is_certificate:
+        return out
+    if not cert.is_genuine_looking:
+        out.append(Signal(name="certificate_suspect", severity="high", category="certificate",
+                          evidence=f"Document '{cert.title or cert.cert_type}' shows authenticity problems: "
+                                   + "; ".join(cert.forgery_signals or ["model judged it not genuine-looking"]) + ".",
+                          why="The visual layout/seal/fonts look inconsistent with a genuine credential — examine the original."))
+    elif len(cert.forgery_signals or []) >= 2:
+        out.append(Signal(name="certificate_suspect", severity="medium", category="certificate",
+                          evidence="Multiple forgery hints: " + "; ".join(cert.forgery_signals) + ".",
+                          why="Several small anomalies together warrant a manual look."))
+    vu = _parse_date(cert.valid_until)
+    if vu and vu < today:
+        out.append(Signal(name="certificate_expired", severity="medium", category="certificate",
+                          evidence=f"Certificate '{cert.title or cert.cert_type}' expired on {cert.valid_until} "
+                                   f"({(today - vu).days} days ago).",
+                          why="An expired credential does not meet a 'valid & current' requirement."))
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Risk scoring — weighted, deterministic, calibrated NOT alarmist. Output is a
+# SIGNAL summary for a recruiter, never an auto-reject.
+# --------------------------------------------------------------------------- #
+_BASE = {"high": 0.60, "medium": 0.30, "low": 0.12}
+_WEAK_MULT = 0.40
+_WEAK_CAP = 0.15  # all weak signals together can lift at most this much
+
+
+def _noisy_or(contribs: list[float]) -> float:
+    p = 1.0
+    for c in contribs:
+        p *= (1.0 - max(0.0, min(1.0, c)))
+    return 1.0 - p
+
+
+class RiskAssessment(BaseModel):
+    risk: str
+    score: int
+    signals: list[Signal]
+    summary: str
+
+
+def score_risk(signals: list[Signal]) -> RiskAssessment:
+    strong = [_BASE.get(s.severity, 0.0) for s in signals if not s.weak]
+    weak = [_BASE.get(s.severity, 0.0) * _WEAK_MULT for s in signals if s.weak]
+    p_strong = _noisy_or(strong)
+    p_weak = min(_WEAK_CAP, _noisy_or(weak))
+    p = 1.0 - (1.0 - p_strong) * (1.0 - p_weak)
+    score = round(100 * p)
+
+    # weak/low evidence can lift within a band but never CREATE a HIGH
+    if p_strong < 0.67:
+        score = min(score, 66)
+
+    # an injection attempt embedded in the CV is a concrete, strong fraud flag
+    if any(s.category == "injection" and s.severity == "high" for s in signals):
+        score = max(score, 85)
+
+    risk = "HIGH" if score >= 67 else "MEDIUM" if score >= 34 else "LOW"
+    by_sev = {k: sum(1 for s in signals if s.severity == k and not s.weak) for k in ("high", "medium", "low")}
+    if not signals:
+        summary = "No fraud signals detected — the documents read as authentic. (A clean result is normal.)"
+    else:
+        summary = (f"{risk} risk ({score}/100): {by_sev['high']} high, {by_sev['medium']} medium, "
+                   f"{by_sev['low']} low signal(s). These are SIGNALS for a recruiter to review — not an automated verdict.")
+    return RiskAssessment(risk=risk, score=score, signals=signals, summary=summary)
+
+
+# --------------------------------------------------------------------------- #
+# Verification findings (from the core.agent tool-loop) -> signals.
+# Absence of evidence stays WEAK/low — we never reject on "not found online".
+# --------------------------------------------------------------------------- #
+class VerifyFindings(BaseModel):
+    """Structured result of the github/web verification agent loop."""
+
+    github_account_age_years: float | None = Field(default=None)
+    github_languages: list[str] = Field(default_factory=list)
+    claimed_experience_years: float | None = Field(default=None)
+    skills_not_found: list[str] = Field(default_factory=list, description="claimed skills with no public evidence")
+    company_web_findings: list[str] = Field(default_factory=list, description="short notes on employer web checks")
+    notes: str | None = Field(default=None)
+
+
+def findings_to_signals(f: VerifyFindings) -> list[Signal]:
+    out: list[Signal] = []
+    if (f.github_account_age_years is not None and f.claimed_experience_years
+            and f.github_account_age_years + 2 < f.claimed_experience_years):
+        out.append(Signal(name="github_age_vs_claim", severity="medium", category="verification",
+                          evidence=f"GitHub account is ~{f.github_account_age_years:.0f} year(s) old but the CV "
+                                   f"claims ~{f.claimed_experience_years:.0f} years of experience.",
+                          why="A much younger developer footprint than claimed seniority is worth probing — "
+                              "though developers do work privately."))
+    if f.skills_not_found:
+        out.append(Signal(name="skills_unverified", severity="low", category="verification", weak=True,
+                          evidence=f"Claimed skills with no public evidence: {', '.join(f.skills_not_found)}.",
+                          why="WEAK: absence of public proof is not proof of absence (private/enterprise work). "
+                              "Treat as a question, not a finding."))
+    for note in f.company_web_findings:
+        if "no results" in note.lower() or "not found" in note.lower():
+            out.append(Signal(name="employer_unverified", severity="low", category="verification", weak=True,
+                              evidence=note,
+                              why="WEAK: small or non-English employers often have no web footprint."))
+    return out
+
+
+def injection_signals(texts: list[str]) -> list[Signal]:
+    """Prompt-injection text inside a CV is a strong, concrete fraud flag."""
+    out: list[Signal] = []
+    for t in texts:
+        scan = guard.scan(t or "")
+        if scan["hits"]:
+            out.append(Signal(name="prompt_injection", severity="high", category="injection",
+                              evidence="Injection-style text embedded in the CV: " + ", ".join(scan["hits"]) + ".",
+                              why="The document tries to instruct the screening system (e.g. 'ignore previous "
+                                  "instructions'). Legitimate CVs never do this — strong tampering/fraud flag."))
+            break
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# AI-writing likelihood — deterministic stylometry, optionally blended with the
+# model's holistic read. DELIBERATELY surfaced as a WEAK, capped signal: style-based
+# AI detection is unreliable and over-flags polished / non-native English writing, so
+# it can never alone reach HIGH and the UI frames it as a hint, never a reject.
+# --------------------------------------------------------------------------- #
+_AI_LEXICON = [
+    "results-driven", "results oriented", "detail-oriented", "detail oriented", "leverage",
+    "leveraged", "cutting-edge", "cutting edge", "seamless", "synergy", "synergies",
+    "passionate about", "spearheaded", "proven track record", "team player", "fast-paced",
+    "fast paced", "robust", "comprehensive", "deliver value", "value-add", "innovative",
+    "thrive", "thrives", "demonstrated ability", "strong work ethic", "self-starter",
+    "go-getter", "stakeholder", "holistic", "best-in-class", "world-class", "game-changer",
+    "empower", "tapestry", "underscore", "testament", "delve", "actionable insights",
+    "mission-critical", "at the forefront", "commitment to excellence", "deep dive",
+    "wide range of", "dynamic", "drive value", "driving synergy",
+]
+
+
+def ai_writing_heuristic(text: str) -> tuple[int, list[str]]:
+    """Stylometric AI-likelihood (0-100) + concrete reasons. Deterministic, explainable."""
+    import statistics
+
+    text = text or ""
+    words = re.findall(r"[A-Za-z']+", text)
+    nw = len(words)
+    if nw < 25:
+        return 0, ["too little prose to assess writing style"]
+    low = text.lower()
+    reasons: list[str] = []
+    score = 0
+
+    lex = sum(low.count(k) for k in _AI_LEXICON)
+    if lex:
+        score += min(40, round(lex / nw * 100 * 8))
+        reasons.append(f"{lex} generic buzzword/phrase(s)")
+
+    em = text.count("—") + text.count(" – ")
+    if em / nw * 100 > 0.8:
+        score += min(20, round(em / nw * 100 * 12))
+        reasons.append(f"em-dash overuse ({em} in {nw} words)")
+
+    sents = [s for s in re.split(r"[.!?]+", text) if s.strip()]
+    lens = [len(s.split()) for s in sents]
+    if len(lens) >= 4 and statistics.pstdev(lens) < 3.0:
+        score += 15
+        reasons.append("very uniform sentence length (low burstiness)")
+
+    triads = len(re.findall(r"\b[\w-]+,\s+[\w-]+,?\s+and\s+[\w-]+", text))
+    if triads:
+        score += min(15, triads * 5)
+        reasons.append(f"{triads} 'rule-of-three' list(s)")
+
+    if re.search(r"\bnot (just|only)\b[^.]*\bbut\b", low):
+        score += 10
+        reasons.append("negative parallelism ('not just X but Y')")
+
+    return min(100, score), reasons
+
+
+def ai_writing_signals(claims: CVClaims) -> list[Signal]:
+    """Blend the stylometric heuristic with the model's read (if any) into one WEAK signal."""
+    text = (claims.writing_sample or claims.summary or "").strip()
+    if len(text.split()) < 25:
+        return []
+    h_score, h_reasons = ai_writing_heuristic(text)
+    model = claims.ai_writing_likelihood
+    if model is not None:
+        combined = round(0.5 * h_score + 0.5 * max(0, min(100, model)))
+        reasons = list(claims.ai_writing_reasons) + h_reasons
+    else:
+        combined = h_score
+        reasons = h_reasons
+    if combined < 35:
+        return []
+    sev = "medium" if combined >= 60 else "low"
+    top = "; ".join(dict.fromkeys(r for r in reasons if r)) or "stylometric cues"
+    return [Signal(
+        name="ai_generated_writing", severity=sev, category="writing", weak=True,
+        evidence=f"AI-writing likelihood ~{combined}%. Indicators: {top}.",
+        why="WEAK signal — shown to inform, never to reject. Style-based AI detection is unreliable "
+            "and over-flags polished or non-native English writers, so we cap it and you should "
+            "weight it lightly. Treat it as a prompt to read the prose closely, not as proof.")]
