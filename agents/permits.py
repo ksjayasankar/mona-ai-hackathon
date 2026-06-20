@@ -134,7 +134,9 @@ def _employment_grounded(allowed: bool | None, quote: str | None) -> bool:
 
 
 def _deduct(weight: float, kept: float, what: str) -> str:
-    return f"-{weight - kept:.0f}: {what}" if kept < weight else what
+    # only flag a deduction the reviewer would care about; sub-0.5 rounding noise
+    # (e.g. a 99% read earning 19.8/20) reads as a passed check, not a "-0".
+    return f"-{weight - kept:.0f}: {what}" if (weight - kept) >= 0.5 else what
 
 
 def decide(fields: PermitFields, *, today: date | None = None,
