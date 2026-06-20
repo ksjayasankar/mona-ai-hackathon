@@ -17,7 +17,11 @@ keep the other 7 as polished prototypes that migrate in over time.
   wired end-to-end** (web → API → agent loop → SQLite, tenant-scoped + audited). Runs on
   SQLite + dev-auth locally; Supabase-ready via env. Offline tests green; the foundation is
   the template flagship worktrees copy.
-- 🟡 **Phase 1 — flagships** (parallel git worktrees): **P2 UKS DONE** (`feat/uks`), P4 Persowerk ⬜.
+- ✅ **Phase 1 — flagships MERGED to `master`**: **P2 UKS** (`feat/uks`), **P3 Leistenschneider**
+  (`feat/permits`), **P4 Persowerk** (`feat/fraud`), **P8 Theiss pricing** (`feat/pricing`) — all four
+  merged & verified (**96 tests green · web build green**; live pages at `/uks` `/leistenschneider`
+  `/persowerk` `/theiss-pricing`, plus `/rheinmetall`). **P1 Globus** = WIP (uncommitted in `hk-invoices`);
+  **P10 hardening** = not started.
   - **P2 UKS shift replacement** — deterministic **ArbZG eligibility engine** (qualified + not-on-shift
     + §5 ≥11h rest + §3 weekly cap + Active, with per-candidate **why-eligible / why-excluded**), fairness
     ranking (headroom · last-contacted · overtime · contract · ward · preference); free-text (`core.llm`)
@@ -35,11 +39,10 @@ keep the other 7 as polished prototypes that migrate in over time.
     open `/uks`. Tests: `uv run pytest tests/test_shift.py`. No new pip deps (Twilio via REST/httpx; SSE
     via StreamingResponse). Files: `agents/shift.py`, `services/shift.py`, `api/routes/shift.py`,
     `web/src/app/uks/**`, `core/models/shift.py` (+ alembic `p2shiftcols01`).
-- ⬜ **Phase 2**: Theiss cluster (P7/P8/P9) → lighter (P1/P3/P5) → P6 reels.
-  **P8 Theiss pricing is spec-locked** (see "Flagship decision — P8") — ready to build as a 4th worktree.
-  **P3 Leistenschneider permits is spec-locked** (see "Flagship decision — P3") — productize the existing 4/4 agent as a 5th worktree.
-  **P10 Rheinmetall hardening is spec-locked** (see "Flagship decision — P10") — harden the shipped reference to the "unbeatable" bar as a 6th worktree.
-  **P1 Globus invoices is spec-locked** (see "Flagship decision — P1") — productize the existing invoice-triage prototype as a 7th worktree.
+- ⬜ **Phase 2 — remaining**: P1 Globus (WIP), P10 hardening, and P5/P6/P7/P9 (still Streamlit prototypes).
+  - **P8 Theiss pricing — MERGED ✅** (`feat/pricing`); **P3 Leistenschneider — MERGED ✅** (`feat/permits`).
+  - **P10 Rheinmetall hardening is spec-locked** (see "Flagship decision — P10") — not yet built (6th worktree).
+  - **P1 Globus invoices is spec-locked** (see "Flagship decision — P1") — build in progress in `hk-invoices` (uncommitted).
 
 ## Locked decisions — do not re-litigate
 - **Backend** FastAPI (`api/`). **Frontend** Next.js App Router + TypeScript + Tailwind + shadcn/ui (`web/`).

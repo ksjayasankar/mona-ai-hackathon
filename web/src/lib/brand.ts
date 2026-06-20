@@ -34,17 +34,17 @@ export const TENANTS: Tenant[] = [
   },
   {
     key: "uks", n: 2, company: "Universitätsklinikum des Saarlandes", city: "Homburg", dept: "HR / Staffing",
-    color: "#b3122b", icon: "🏥", agent: "Shift Replacement Agent", status: "building",
+    color: "#b3122b", icon: "🏥", agent: "Shift Replacement Agent", status: "live", href: "/uks",
     promise: "Message it a shift gap; it finds available, qualified staff and drafts the outreach automatically.",
   },
   {
     key: "leistenschneider", n: 3, company: "Leistenschneider", city: "Saarbrücken", dept: "Compliance",
-    color: "#1f4e8c", icon: "🛂", agent: "Work-Permit Validator", status: "building",
+    color: "#1f4e8c", icon: "🛂", agent: "Work-Permit Validator", status: "live", href: "/leistenschneider",
     promise: "Confirms a document really is a work permit, with a calibrated confidence % and the valid-until date.",
   },
   {
     key: "persowerk", n: 4, company: "Persowerk Deutschland", city: "Saarbrücken", dept: "Talent / Verification",
-    color: "#6b21a8", icon: "🔎", agent: "CV & Certificate Authenticity Agent", status: "building",
+    color: "#6b21a8", icon: "🔎", agent: "CV & Certificate Authenticity Agent", status: "live", href: "/persowerk",
     promise: "Cross-checks work history, flags fabrication signals, and verifies certificates are real and current.",
   },
   {
@@ -64,7 +64,7 @@ export const TENANTS: Tenant[] = [
   },
   {
     key: "theiss_pricing", n: 8, company: "Dr. Theiss Naturwaren", city: "Homburg", dept: "Marketing / Pricing",
-    color: "#15803d", icon: "💶", agent: "Dynamic Pricing Agent", status: "locked",
+    color: "#15803d", icon: "💶", agent: "Dynamic Pricing Agent", status: "live", href: "/theiss-pricing",
     promise: "A signal-driven pricing engine with hard guardrails and a written rationale for every move.",
   },
   {
