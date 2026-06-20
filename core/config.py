@@ -18,6 +18,17 @@ DATA_OUT.mkdir(exist_ok=True)
 
 load_dotenv(REPO_ROOT / ".env")
 
+# ---- provider switch -----------------------------------------------------
+# gemini = prod/demo (org key, capped ~20 req/day/model). ollama = free local dev on
+# the M2 (llama3.1:8b chat+tools, nomic-embed-text embeddings). Default stays gemini so
+# the existing Streamlit demo + its pre-baked cache are untouched; dev/tests opt in with
+# LLM_PROVIDER=ollama. Vision (PDF/image) has no local model -> always routed to gemini.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+OLLAMA_EMBED = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+GEMINI_EMBED = os.getenv("GEMINI_EMBED_MODEL", "text-embedding-004")
+
 # ---- models (Gemini; override via .env) ----------------------------------
 # The free tier caps each model at ~20 requests/DAY. Each model has its OWN bucket, so
 # we keep a fallback CHAIN: when one model's daily cap is hit, core.llm rolls to the

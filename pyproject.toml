@@ -18,6 +18,7 @@ dependencies = [
     "moviepy>=2.0",
     "gtts>=2.5",
     "google-genai>=2.9.0",
+    "ollama>=0.6.2",
 ]
 
 [tool.uv]
