@@ -425,3 +425,103 @@ def cert_signals(cert: CertFields, *, today: date = TODAY) -> list[Signal]:
                                    f"({(today - vu).days} days ago).",
                           why="An expired credential does not meet a 'valid & current' requirement."))
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Risk scoring — weighted, deterministic, calibrated NOT alarmist. Output is a
+# SIGNAL summary for a recruiter, never an auto-reject.
+# --------------------------------------------------------------------------- #
+_BASE = {"high": 0.60, "medium": 0.30, "low": 0.12}
+_WEAK_MULT = 0.40
+_WEAK_CAP = 0.15  # all weak signals together can lift at most this much
+
+
+def _noisy_or(contribs: list[float]) -> float:
+    p = 1.0
+    for c in contribs:
+        p *= (1.0 - max(0.0, min(1.0, c)))
+    return 1.0 - p
+
+
+class RiskAssessment(BaseModel):
+    risk: str
+    score: int
+    signals: list[Signal]
+    summary: str
+
+
+def score_risk(signals: list[Signal]) -> RiskAssessment:
+    strong = [_BASE.get(s.severity, 0.0) for s in signals if not s.weak]
+    weak = [_BASE.get(s.severity, 0.0) * _WEAK_MULT for s in signals if s.weak]
+    p_strong = _noisy_or(strong)
+    p_weak = min(_WEAK_CAP, _noisy_or(weak))
+    p = 1.0 - (1.0 - p_strong) * (1.0 - p_weak)
+    score = round(100 * p)
+
+    # weak/low evidence can lift within a band but never CREATE a HIGH
+    if p_strong < 0.67:
+        score = min(score, 66)
+
+    # an injection attempt embedded in the CV is a concrete, strong fraud flag
+    if any(s.category == "injection" and s.severity == "high" for s in signals):
+        score = max(score, 85)
+
+    risk = "HIGH" if score >= 67 else "MEDIUM" if score >= 34 else "LOW"
+    by_sev = {k: sum(1 for s in signals if s.severity == k and not s.weak) for k in ("high", "medium", "low")}
+    if not signals:
+        summary = "No fraud signals detected — the documents read as authentic. (A clean result is normal.)"
+    else:
+        summary = (f"{risk} risk ({score}/100): {by_sev['high']} high, {by_sev['medium']} medium, "
+                   f"{by_sev['low']} low signal(s). These are SIGNALS for a recruiter to review — not an automated verdict.")
+    return RiskAssessment(risk=risk, score=score, signals=signals, summary=summary)
+
+
+# --------------------------------------------------------------------------- #
+# Verification findings (from the core.agent tool-loop) -> signals.
+# Absence of evidence stays WEAK/low — we never reject on "not found online".
+# --------------------------------------------------------------------------- #
+class VerifyFindings(BaseModel):
+    """Structured result of the github/web verification agent loop."""
+
+    github_account_age_years: float | None = Field(default=None)
+    github_languages: list[str] = Field(default_factory=list)
+    claimed_experience_years: float | None = Field(default=None)
+    skills_not_found: list[str] = Field(default_factory=list, description="claimed skills with no public evidence")
+    company_web_findings: list[str] = Field(default_factory=list, description="short notes on employer web checks")
+    notes: str | None = Field(default=None)
+
+
+def findings_to_signals(f: VerifyFindings) -> list[Signal]:
+    out: list[Signal] = []
+    if (f.github_account_age_years is not None and f.claimed_experience_years
+            and f.github_account_age_years + 2 < f.claimed_experience_years):
+        out.append(Signal(name="github_age_vs_claim", severity="medium", category="verification",
+                          evidence=f"GitHub account is ~{f.github_account_age_years:.0f} year(s) old but the CV "
+                                   f"claims ~{f.claimed_experience_years:.0f} years of experience.",
+                          why="A much younger developer footprint than claimed seniority is worth probing — "
+                              "though developers do work privately."))
+    if f.skills_not_found:
+        out.append(Signal(name="skills_unverified", severity="low", category="verification", weak=True,
+                          evidence=f"Claimed skills with no public evidence: {', '.join(f.skills_not_found)}.",
+                          why="WEAK: absence of public proof is not proof of absence (private/enterprise work). "
+                              "Treat as a question, not a finding."))
+    for note in f.company_web_findings:
+        if "no results" in note.lower() or "not found" in note.lower():
+            out.append(Signal(name="employer_unverified", severity="low", category="verification", weak=True,
+                              evidence=note,
+                              why="WEAK: small or non-English employers often have no web footprint."))
+    return out
+
+
+def injection_signals(texts: list[str]) -> list[Signal]:
+    """Prompt-injection text inside a CV is a strong, concrete fraud flag."""
+    out: list[Signal] = []
+    for t in texts:
+        scan = guard.scan(t or "")
+        if scan["hits"]:
+            out.append(Signal(name="prompt_injection", severity="high", category="injection",
+                              evidence="Injection-style text embedded in the CV: " + ", ".join(scan["hits"]) + ".",
+                              why="The document tries to instruct the screening system (e.g. 'ignore previous "
+                                  "instructions'). Legitimate CVs never do this — strong tampering/fraud flag."))
+            break
+    return out
