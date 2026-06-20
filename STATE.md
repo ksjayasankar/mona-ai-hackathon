@@ -20,7 +20,11 @@ keep the other 7 as polished prototypes that migrate in over time.
 - ⬜ **Phase 1 — flagships** (parallel git worktrees): P2 UKS, P4 Persowerk.
 - ⬜ **Phase 2**: Theiss cluster (P7/P8/P9) → lighter (P1/P3/P5) → P6 reels.
   **P8 Theiss pricing is spec-locked** (see "Flagship decision — P8") — ready to build as a 4th worktree.
-  **P3 Leistenschneider permits is spec-locked** (see "Flagship decision — P3") — productize the existing 4/4 agent as a 5th worktree.
+  ✅ **P3 Leistenschneider permits — PRODUCTIZED** (`hk-permits`/`feat/permits`, see "Flagship decision — P3").
+  Grounded quote-spans + itemized rubric confidence + §AufenthG RAG corpus + human-review queue (audited),
+  wired web → API → agent → SQLite, tenant-scoped. `evals/permits_eval.py` still 4/4 (keyless — demo
+  pre-baked into the committed Gemini cache); `tests/test_permits.py` 19/19 offline & deterministic.
+  Page: `web/src/app/leistenschneider`. Run web `cd web && npm run dev` → http://localhost:3000/leistenschneider.
 
 ## Locked decisions — do not re-litigate
 - **Backend** FastAPI (`api/`). **Frontend** Next.js App Router + TypeScript + Tailwind + shadcn/ui (`web/`).
@@ -129,6 +133,16 @@ page `app/pages/03_*` and `evals/permits_eval.py` stay UNTOUCHED.
 - **Budget guard:** dev/test on Ollama (free); extraction is a single structured pass; cache every Gemini
   call; RAG embeddings namespaced per provider; pre-bake the demo.
 - **Out of scope:** real BAMF/ABH registry lookups, biometric eAT chip reading, OCR pipelines.
+- **BUILD STATUS (done):** owns `agents/permits.py` (+new `agents/aufenthg.py` corpus), `core/models/permit.py`,
+  `services/permits.py`, `api/routes/permits.py`, `web/src/app/leistenschneider/**`, `web/src/lib/api/permits.ts`,
+  `web/public/samples/**`, `tests/test_permits.py`. Two allowed shared one-liners made: `core/models/__init__.py`
+  (permit import) + `api/main.py` (router). Demo cache: 6 Gemini sample reads force-added under `data/llm_cache/`
+  (gitignored dir, like the prototype) so eval + demo replay **keyless**. `app/pages/03_*` + `evals/permits_eval.py`
+  untouched. **Optional 1-liner (not done, not owned):** add a P3 card to `web/src/app/page.tsx` home (page is
+  reachable directly at `/leistenschneider`). **Heads-up (pre-existing, NOT P3):** `tests/test_secure_intake.py`
+  (P10) is flaky on this machine — fails ~2/3 runs at the pre-P3 baseline too (local Ollama nondeterminism +
+  intermittent SQLite "readonly database" under sustained load). Possible future hardening in `core/db.py`
+  (SQLite `busy_timeout`/WAL) — NOT touched here (shared file).
 
 ## Target architecture (monorepo)
 ```
