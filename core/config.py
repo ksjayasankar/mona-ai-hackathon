@@ -19,10 +19,11 @@ DATA_OUT.mkdir(exist_ok=True)
 load_dotenv(REPO_ROOT / ".env")
 
 # ---- models (Gemini; override via .env) ----------------------------------
-# Gemini 2.5 Flash is the default workhorse: fast + cheap + native vision/PDF, ideal
-# for document extraction at demo volume. 2.5 Pro is available for heavier reasoning.
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-MODEL_SMART = os.getenv("GEMINI_MODEL_SMART", "gemini-2.5-pro")
+# Flash-Lite is the default workhorse: native vision/PDF, fast, and the most generous
+# FREE-TIER daily quota (gemini-2.5-flash's free cap is only ~20 req/day). Each model
+# has its own bucket, so MODEL_SMART (flash) is a separate fallback for harder jobs.
+MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+MODEL_SMART = os.getenv("GEMINI_MODEL_SMART", "gemini-2.5-flash")
 HAS_KEY = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
 
 # ---- data file shortcuts -------------------------------------------------

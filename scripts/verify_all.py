@@ -121,9 +121,15 @@ def p10():
     return f"injection_detected={inj} · doc-status={present}"
 
 
-for name, fn in [("P1 invoices", p1), ("P2 shift-parse", p2), ("P4 fraud", p4),
-                 ("P5 interview", p5), ("P6 reels-script", p6), ("P7 analytics", p7),
-                 ("P8 pricing", p8), ("P9 gaps", p9), ("P10 secure-intake", p10)]:
+import os as _os
+_ALL = {"P1 invoices": p1, "P2 shift-parse": p2, "P4 fraud": p4, "P5 interview": p5,
+        "P6 reels-script": p6, "P7 analytics": p7, "P8 pricing": p8, "P9 gaps": p9,
+        "P10 secure-intake": p10}
+# run a subset via VERIFY_ONLY="P4,P5,..."; default = all
+only = [s.strip() for s in _os.getenv("VERIFY_ONLY", "").split(",") if s.strip()]
+for name, fn in _ALL.items():
+    if only and not any(name.startswith(o) for o in only):
+        continue
     step(name, fn)
 
 passed = sum(1 for v in R.values() if isinstance(v, dict) and v.get("ok"))
