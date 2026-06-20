@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 
 from core.auth import Principal, current_principal
 from core.db import DATABASE_URL, init_db
-from api.routes import fraud, secure_intake, shift
+from api.routes import fraud, permits, secure_intake, shift
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("api")
@@ -58,3 +58,4 @@ def me(principal: Principal = Depends(current_principal)) -> dict:
 app.include_router(secure_intake.router)
 app.include_router(shift.router)
 app.include_router(fraud.router)
+app.include_router(permits.router)
