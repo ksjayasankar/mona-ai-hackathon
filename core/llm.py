@@ -240,6 +240,50 @@ def _to_ollama_msgs(messages) -> list[dict]:
     return out
 
 
+def _extract_json_objects(text: str) -> list[str]:
+    """Pull brace-balanced JSON substrings out of free text."""
+    objs, depth, start = [], 0, -1
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                objs.append(text[start:i + 1])
+                start = -1
+    return objs
+
+
+def _text_toolcall(text: str, tool_names: list[str]) -> "ToolCall | None":
+    """Some local models emit a tool call as TEXT instead of structured tool_calls.
+    Recover it: parse a JSON object naming a known tool (exact or fuzzy match)."""
+    low = {n.lower(): n for n in tool_names}
+    for cand in [_strip_fence(text), *_extract_json_objects(text)]:
+        try:
+            obj = json.loads(cand)
+        except Exception:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        raw = obj.get("name") or obj.get("tool") or obj.get("function")
+        if not isinstance(raw, str):
+            continue
+        rl = raw.lower()
+        match = low.get(rl) or next((n for nl, n in low.items() if nl in rl or rl in nl), None)
+        if not match:
+            continue
+        args = obj.get("parameters") or obj.get("arguments") or obj.get("args") or {}
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                args = {}
+        return ToolCall(id=match, name=match, args=dict(args) if isinstance(args, dict) else {})
+    return None
+
+
 def _ollama_chat(messages, tools, schema, max_tokens) -> ChatTurn:
     kw: dict = {"model": config.OLLAMA_MODEL, "messages": _to_ollama_msgs(messages),
                 "options": {"num_predict": max_tokens}}
@@ -255,6 +299,12 @@ def _ollama_chat(messages, tools, schema, max_tokens) -> ChatTurn:
         f = tc.function
         args = f.arguments if isinstance(f.arguments, dict) else json.loads(f.arguments or "{}")
         turn.tool_calls.append(ToolCall(id=f.name, name=f.name, args=dict(args)))
+    # local models sometimes emit the tool call as plain text — recover it
+    if tools and not turn.tool_calls and turn.text:
+        recovered = _text_toolcall(turn.text, [t["name"] for t in tools])
+        if recovered:
+            turn.tool_calls.append(recovered)
+            turn.text = ""
     return turn
 
 
